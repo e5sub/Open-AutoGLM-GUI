@@ -1,0 +1,23 @@
+# GUI 和核心依赖
+tkinter  # 通常随Python安装
+Pillow>=12.0.0
+openai>=2.9.0
+
+# 打包依赖
+pyinstaller>=6.0.0
+setuptools>=65.0.0
+wheel>=0.38.0
+
+# 系统依赖
+requests>=2.28.0
+urllib3>=1.26.0
+
+# 其他工具依赖
+platform
+threading
+subprocess
+json
+datetime
+re
+os
+sys
