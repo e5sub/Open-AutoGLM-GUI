@@ -1,6 +1,6 @@
-# Phone Agent GUI 使用说明
+# Open-AutoGLM-GUI 使用说明
 
-这是一个基于Phone Agent项目创建的图形用户界面，可以方便地运行main.py并自定义参数。
+这是一个基于Open-AutoGLM项目创建的图形用户界面，可以方便地运行main.py并自定义参数。
 
 ## 🐛 编码问题修复
 
