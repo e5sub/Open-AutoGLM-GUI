@@ -243,72 +243,213 @@ class PhoneAgentGUI:
             messagebox.showerror("错误", "请输入任务描述")
             return
             
-        # 提前获取选中的设备（避免在打包环境中使用未定义的变量）
-        selected_device = self.selected_device_id.get()
-
-        # 检测是否在打包环境中运行
-        if getattr(sys, 'frozen', False):
-            # 在打包环境中，直接导入并运行main模块
-            self._run_agent_direct(base_url, model, apikey, task, selected_device)
-            return
-        else:
-            # 在开发环境中，使用subprocess运行main.py
-            cmd = [
-                sys.executable, "-u", "main.py",  # -u 参数强制无缓冲输出
-                "--base-url", base_url,
-                "--model", model,
-                "--apikey", apikey
-            ]
-        
-        # 添加设备ID（如果选择了设备）并附加任务参数
-        if selected_device:
-            device_id = selected_device.split(' ')[0]
-            cmd.extend(["--device-id", device_id])
-            self._append_output(f"📱 使用设备: {device_id}\n")
-        else:
-            self._append_output("⚠️ 未选择特定设备，将使用自动检测\n")
-
-        if task:
-            cmd.append(task)
-        
-        # 在新线程中运行
+        # 设置运行状态和UI
         self.running = True
         self.run_button.config(state=tk.DISABLED)
         self.stop_button.config(state=tk.NORMAL)
-        self.status_var.set("🚀 运行中...")
+        self.status_var.set("🔄 正在执行任务...")
         self.clear_output()
-        self._append_output(f"🚀 启动手机助手，任务: {task}\n")
-        self._append_output(f"📊 配置信息: URL={base_url}, Model={model}\n")
-        self._append_output(f"{'='*60}\n")
+            
+        # 提前获取选中的设备（避免在打包环境中使用未定义的变量）
+        selected_device = self.selected_device_id.get()
+
+        # 无论在开发环境还是打包环境中，都使用直接运行方式
+        self._run_agent_direct(base_url, model, apikey, task, selected_device)
         
-        threading.Thread(target=self._run_command, args=(cmd,), daemon=True).start()
-        
+    def _run_adb_silent(self, cmd, timeout=10):
+        """静默执行ADB命令，避免弹窗"""
+        import os
+        creation_flags = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
+        return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout,
+                          creationflags=creation_flags)
+
     def _run_agent_direct(self, base_url, model, apikey, task, selected_device):
         """直接运行代理（打包环境）"""
         try:
-            # 导入phone_agent模块
-            from phone_agent.agent import PhoneAgent
+            # 导入必要模块
+            from phone_agent.agent import PhoneAgent, AgentConfig
+            from phone_agent.model import ModelConfig
+            from phone_agent.adb import ADBConnection, list_devices
             
             # 解析设备ID
             device_id = None
             if selected_device:
                 device_id = selected_device.split(' ')[0]
             
-            # 创建代理实例
-            self._append_output("🔧 初始化PhoneAgent...\n")
-            
             # 使用线程安全的输出函数
             def safe_output(text):
-                self.root.after(0, self._append_output, text)
+                # 为每行添加时间戳和格式化
+                if '\n' in text:
+                    lines = text.split('\n')
+                    for line in lines:
+                        if line.strip():
+                            self.root.after(0, self._append_output, line + '\n')
+                else:
+                    if text.strip():
+                        self.root.after(0, self._append_output, text)
             
-            # 直接运行代理逻辑
-            self.root.after(0, self._process_finished, 0)
+            # 在打包环境中设置subprocess创建标志，避免弹窗
+            import subprocess
+            import os
+            if hasattr(subprocess, 'CREATE_NO_WINDOW'):
+                original_popen = subprocess.Popen
+                def patched_popen(*args, **kwargs):
+                    if 'creationflags' not in kwargs and os.name == 'nt':
+                        kwargs['creationflags'] = subprocess.CREATE_NO_WINDOW
+                    return original_popen(*args, **kwargs)
+                subprocess.Popen = patched_popen
+            
+            # 创建代理实例
+            safe_output("🔧 初始化PhoneAgent...\n")
+            
+            # 创建模型配置
+            model_config = ModelConfig(
+                base_url=base_url,
+                model_name=model,
+                api_key=apikey
+            )
+            
+            # 获取打包环境中的ADB路径
+            import sys
+            if getattr(sys, 'frozen', False):
+                # 在打包环境中，ADB文件在exe所在目录
+                import os
+                exe_dir = os.path.dirname(sys.executable)
+                adb_path = os.path.join(exe_dir, 'adb.exe')
+                if not os.path.exists(adb_path):
+                    # 尝试在当前目录查找
+                    import tempfile
+                    adb_path = 'adb.exe'
+            else:
+                adb_path = 'adb.exe'
+            
+            # 创建代理配置
+            agent_config = AgentConfig(
+                device_id=device_id,
+                verbose=True,
+                max_steps=50  # 限制步数，避免无限循环
+            )
+            
+            # 创建并运行PhoneAgent
+            safe_output("🚀 开始执行任务...\n")
+            agent = PhoneAgent(
+                model_config=model_config,
+                agent_config=agent_config
+            )
+            
+            # 设置ADB路径（如果需要）
+            safe_output(f"🔧 ADB路径: {adb_path}\n")
+            
+            # 在单独线程中执行任务，避免阻塞GUI
+            def execute_task():
+                try:
+                    safe_output(f"📋 开始执行: {task}\n")
+                    
+                    # 重定向print输出到GUI
+                    import sys
+                    original_stdout = sys.stdout
+                    
+                    class GUIOutput:
+                        def __init__(self, output_func, stop_check_func):
+                            self.output_func = output_func
+                            self.stop_check_func = stop_check_func
+                            self.buffer = ""  # 添加缓冲区
+                            self.in_progress = False  # 标记是否正在处理同一行
+                            
+                        def write(self, text):
+                            # 检查是否需要停止
+                            if not self.stop_check_func():
+                                return
+                            
+                            # 直接累积到缓冲区
+                            self.buffer += text
+                            
+                            # 只有当遇到换行符或缓冲区很大时才处理
+                            if '\n' in self.buffer or len(self.buffer) > 200:
+                                # 处理缓冲区中的完整行
+                                while '\n' in self.buffer:
+                                    line_end = self.buffer.find('\n')
+                                    line = self.buffer[:line_end]
+                                    self.buffer = self.buffer[line_end + 1:]  # 跳过换行符
+                                    
+                                    # 如果行不为空，输出
+                                    if line.strip():
+                                        self.output_func(line)
+                                        
+                        def flush(self):
+                            # 输出剩余的缓冲内容
+                            if self.buffer.strip():
+                                self.output_func(self.buffer)
+                                self.buffer = ""
+                    
+                    # 检查是否继续运行
+                    def is_running():
+                        return self.running
+                    
+                    # 设置输出重定向
+                    sys.stdout = GUIOutput(safe_output, is_running)
+                    
+                    try:
+                        # 手动执行步骤，以便检查停止标志
+                        safe_output("🔄 开始步骤化执行...\n")
+                        
+                        # 第一步
+                        if not self.running:
+                            safe_output("🛑 任务被用户停止\n")
+                            return
+                            
+                        result = agent.step(task)
+                        safe_output(f"📊 步骤 1: {result.message}\n")
+                        
+                        if result.finished:
+                            safe_output("✅ 任务提前完成\n")
+                            sys.stdout = original_stdout
+                            self.root.after(0, self._process_finished, 0)
+                            return
+                        
+                        # 继续执行步骤
+                        step_count = 2
+                        while self.running and step_count <= agent_config.max_steps:
+                            if not self.running:
+                                safe_output("🛑 任务被用户停止\n")
+                                break
+                                
+                            result = agent.step()
+                            safe_output(f"📊 步骤 {step_count}: {result.message}\n")
+                            
+                            if result.finished:
+                                safe_output("✅ 任务执行完成\n")
+                                break
+                                
+                            step_count += 1
+                            
+                        if step_count > agent_config.max_steps:
+                            safe_output("⚠️ 达到最大步数限制\n")
+                            
+                    finally:
+                        # 恢复原始输出
+                        sys.stdout = original_stdout
+                        
+                    if self.running:
+                        self.root.after(0, self._process_finished, 0)
+                    else:
+                        self.root.after(0, lambda: self._process_finished(-2))  # 自定义停止代码
+                    
+                except Exception as e:
+                    safe_output(f"❌ 任务执行出错: {str(e)}\n")
+                    # 恢复原始输出（以防异常时没有恢复）
+                    if 'original_stdout' in locals():
+                        sys.stdout = original_stdout
+                    self.root.after(0, self._process_finished, -1)
+            
+            # 启动任务执行线程
+            threading.Thread(target=execute_task, daemon=True).start()
             
         except ImportError as e:
-            self._append_output(f"❌ 导入phone_agent模块失败: {str(e)}\n")
+            safe_output(f"❌ 导入phone_agent模块失败: {str(e)}\n")
             self.root.after(0, self._process_finished, -1)
         except Exception as e:
-            self._append_output(f"❌ 运行代理时出错: {str(e)}\n")
+            safe_output(f"❌ 运行代理时出错: {str(e)}\n")
             self.root.after(0, self._process_finished, -1)
     
     def _run_command(self, cmd):
@@ -355,24 +496,47 @@ class PhoneAgentGUI:
             self.root.after(0, self._process_finished, -1)
             
     def _append_output(self, text):
-        # 添加时间戳
-        timestamp = datetime.now().strftime("%H:%M:%S")
+        # 如果传入的是空文本，直接返回
+        if not text:
+            return
         
-        # 处理不同类型的输出
-        if text.strip():
-            # 检查是否为错误输出
-            if any(keyword in text.lower() for keyword in ['error', 'failed', '错误', '失败']):
-                formatted_text = f"[{timestamp}] ❌ {text}\n"
-            elif any(keyword in text.lower() for keyword in ['warning', 'warn', '警告']):
-                formatted_text = f"[{timestamp}] ⚠️ {text}\n"
-            elif any(keyword in text.lower() for keyword in ['success', 'ok', '成功', '完成']):
-                formatted_text = f"[{timestamp}] ✅ {text}\n"
-            elif any(keyword in text.lower() for keyword in ['checking', '检查']):
-                formatted_text = f"[{timestamp}] 🔍 {text}\n"
-            else:
-                formatted_text = f"[{timestamp}] {text}\n"
-        else:
+        # 避免对已经是完整行的文本重复处理
+        # 如果文本已经包含时间戳格式，直接插入
+        if text.startswith('[') and '] ' in text and (':' in text.split('] ')[0].split('[')[1] if ']' in text else False):
             formatted_text = text
+        else:
+            # 添加时间戳
+            timestamp = datetime.now().strftime("%H:%M:%S")
+            
+            # 分割文本为行，处理多行文本
+            lines = text.split('\n')
+            formatted_lines = []
+            
+            for line in lines:
+                if not line:  # 空行
+                    formatted_lines.append("")
+                    continue
+                    
+                # 处理不同类型的输出
+                if any(keyword in line.lower() for keyword in ['error', 'failed', '错误', '失败']):
+                    formatted_line = f"[{timestamp}] ❌ {line}"
+                elif any(keyword in line.lower() for keyword in ['warning', 'warn', '警告']):
+                    formatted_line = f"[{timestamp}] ⚠️ {line}"
+                elif any(keyword in line.lower() for keyword in ['success', 'ok', '成功', '完成']):
+                    formatted_line = f"[{timestamp}] ✅ {line}"
+                elif any(keyword in line.lower() for keyword in ['checking', '检查']):
+                    formatted_line = f"[{timestamp}] 🔍 {line}"
+                else:
+                    formatted_line = f"[{timestamp}] {line}"
+                    
+                formatted_lines.append(formatted_line)
+            
+            # 重新组合文本
+            formatted_text = '\n'.join(formatted_lines)
+            
+            # 如果原始文本以换行符结尾，确保格式化文本也如此
+            if text.endswith('\n') and not formatted_text.endswith('\n'):
+                formatted_text += '\n'
         
         # 插入文本
         self.output_text.insert(tk.END, formatted_text)
@@ -380,6 +544,13 @@ class PhoneAgentGUI:
         
         # 更新行号
         self.update_line_numbers()
+        
+    def _insert_direct_text(self, text):
+        """直接插入文本，不添加时间戳（用于已经格式化的输出）"""
+        if text.strip():  # 只插入非空内容
+            self.output_text.insert(tk.END, text)
+            self.output_text.see(tk.END)
+            self.update_line_numbers()
         
     def update_line_numbers(self):
         """更新行号显示"""
@@ -492,6 +663,9 @@ class PhoneAgentGUI:
         if return_code == 0:
             self.status_var.set("✅ 执行成功")
             self._append_output("✅ 程序执行成功完成。\n")
+        elif return_code == -2:
+            self.status_var.set("🛑 任务已停止")
+            self._append_output("🛑 任务被用户停止。\n")
         else:
             self.status_var.set(f"❌ 执行失败 (退出代码: {return_code})")
             self._append_output(f"❌ 程序执行失败，退出代码: {return_code}\n")
@@ -499,12 +673,23 @@ class PhoneAgentGUI:
         self.process = None
         
     def stop_agent(self):
-        if self.process and self.running:
+        if self.running:
             try:
-                self.process.terminate()
-                self._append_output("正在停止进程...\n")
+                self.running = False  # 设置停止标志
+                self._append_output("🛑 正在停止任务...\n")
+                
+                # 由于直接调用方式没有进程可以终止，只能通过标志位停止
+                # 实际的停止会在下一次循环检查时生效
+                
+                # 立即更新UI状态
+                self.run_button.config(state=tk.NORMAL)
+                self.stop_button.config(state=tk.DISABLED)
+                self.status_var.set("🛑 任务已停止")
+                
+                self._append_output("✅ 停止信号已发送\n")
+                
             except Exception as e:
-                self._append_output(f"停止进程时出错: {str(e)}\n")
+                self._append_output(f"停止任务时出错: {str(e)}\n")
                 
     def clear_output(self):
         self.output_text.delete("1.0", tk.END)
@@ -518,8 +703,7 @@ class PhoneAgentGUI:
             self._append_output("🔍 正在扫描ADB设备...\n")
             
             # 获取设备列表
-            result = subprocess.run(['adb', 'devices'], 
-                                capture_output=True, text=True, timeout=10)
+            result = self._run_adb_silent(['adb', 'devices'])
             
             if result.returncode == 0:
                 self.connected_devices = self._parse_device_list(result.stdout)
@@ -563,26 +747,22 @@ class PhoneAgentGUI:
             info = {}
             
             # 获取设备型号
-            model_result = subprocess.run(['adb', '-s', device_id, 'shell', 'getprop', 'ro.product.model'],
-                                      capture_output=True, text=True, timeout=5)
+            model_result = self._run_adb_silent(['adb', '-s', device_id, 'shell', 'getprop', 'ro.product.model'], timeout=5)
             if model_result.returncode == 0:
                 info['model'] = model_result.stdout.strip()
                 
             # 获取Android版本
-            version_result = subprocess.run(['adb', '-s', device_id, 'shell', 'getprop', 'ro.build.version.release'],
-                                         capture_output=True, text=True, timeout=5)
+            version_result = self._run_adb_silent(['adb', '-s', device_id, 'shell', 'getprop', 'ro.build.version.release'], timeout=5)
             if version_result.returncode == 0:
                 info['android_version'] = version_result.stdout.strip()
                 
             # 获取设备制造商
-            manufacturer_result = subprocess.run(['adb', '-s', device_id, 'shell', 'getprop', 'ro.product.manufacturer'],
-                                             capture_output=True, text=True, timeout=5)
+            manufacturer_result = self._run_adb_silent(['adb', '-s', device_id, 'shell', 'getprop', 'ro.product.manufacturer'], timeout=5)
             if manufacturer_result.returncode == 0:
                 info['manufacturer'] = manufacturer_result.stdout.strip()
                 
             # 获取IP地址
-            ip_result = subprocess.run(['adb', '-s', device_id, 'shell', 'ip', 'addr', 'show', 'wlan0'],
-                                    capture_output=True, text=True, timeout=5)
+            ip_result = self._run_adb_silent(['adb', '-s', device_id, 'shell', 'ip', 'addr', 'show', 'wlan0'], timeout=5)
             if ip_result.returncode == 0:
                 ip_match = re.search(r'inet (\d+\.\d+\.\d+\.\d+)', ip_result.stdout)
                 if ip_match:
