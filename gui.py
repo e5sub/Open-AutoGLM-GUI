@@ -278,15 +278,9 @@ class PhoneAgentGUI:
             
             # 使用线程安全的输出函数
             def safe_output(text):
-                # 为每行添加时间戳和格式化
-                if '\n' in text:
-                    lines = text.split('\n')
-                    for line in lines:
-                        if line.strip():
-                            self.root.after(0, self._append_output, line + '\n')
-                else:
-                    if text.strip():
-                        self.root.after(0, self._append_output, text)
+                if text:
+                    # 直接插入到GUI，不做任何格式化处理
+                    self.root.after(0, self._insert_direct_text, text)
             
             # 在打包环境中设置subprocess创建标志，避免弹窗
             import subprocess
@@ -345,49 +339,52 @@ class PhoneAgentGUI:
                 try:
                     safe_output(f"📋 开始执行: {task}\n")
                     
-                    # 重定向print输出到GUI
+                    # 重定向print输出到GUI - 保持原始格式
                     import sys
+                    import threading
                     original_stdout = sys.stdout
                     
-                    class GUIOutput:
+                    class StreamOutputCollector:
+                        """流式输出收集器 - 重新组合字符为完整输出"""
                         def __init__(self, output_func, stop_check_func):
                             self.output_func = output_func
                             self.stop_check_func = stop_check_func
-                            self.buffer = ""  # 添加缓冲区
-                            self.in_progress = False  # 标记是否正在处理同一行
+                            self.char_buffer = []
+                            self.last_output_time = 0
                             
                         def write(self, text):
                             # 检查是否需要停止
                             if not self.stop_check_func():
                                 return
                             
-                            # 直接累积到缓冲区
-                            self.buffer += text
-                            
-                            # 只有当遇到换行符或缓冲区很大时才处理
-                            if '\n' in self.buffer or len(self.buffer) > 200:
-                                # 处理缓冲区中的完整行
-                                while '\n' in self.buffer:
-                                    line_end = self.buffer.find('\n')
-                                    line = self.buffer[:line_end]
-                                    self.buffer = self.buffer[line_end + 1:]  # 跳过换行符
+                            if text:
+                                import time
+                                current_time = time.time()
+                                
+                                # 收集字符
+                                for char in text:
+                                    self.char_buffer.append(char)
+                                
+                                # 如果遇到换行符或者超过一定时间，输出缓冲内容
+                                if '\n' in text or (current_time - self.last_output_time > 0.05 and len(self.char_buffer) > 10):
+                                    if self.char_buffer:
+                                        output_text = ''.join(self.char_buffer)
+                                        self.output_func(output_text)
+                                        self.char_buffer = []
+                                        self.last_output_time = current_time
                                     
-                                    # 如果行不为空，输出
-                                    if line.strip():
-                                        self.output_func(line)
-                                        
                         def flush(self):
-                            # 输出剩余的缓冲内容
-                            if self.buffer.strip():
-                                self.output_func(self.buffer)
-                                self.buffer = ""
+                            if self.char_buffer:
+                                output_text = ''.join(self.char_buffer)
+                                self.output_func(output_text)
+                                self.char_buffer = []
                     
                     # 检查是否继续运行
                     def is_running():
                         return self.running
                     
                     # 设置输出重定向
-                    sys.stdout = GUIOutput(safe_output, is_running)
+                    sys.stdout = StreamOutputCollector(safe_output, is_running)
                     
                     try:
                         # 手动执行步骤，以便检查停止标志
@@ -500,54 +497,16 @@ class PhoneAgentGUI:
         if not text:
             return
         
-        # 避免对已经是完整行的文本重复处理
-        # 如果文本已经包含时间戳格式，直接插入
-        if text.startswith('[') and '] ' in text and (':' in text.split('] ')[0].split('[')[1] if ']' in text else False):
-            formatted_text = text
-        else:
-            # 添加时间戳
-            timestamp = datetime.now().strftime("%H:%M:%S")
-            
-            # 分割文本为行，处理多行文本
-            lines = text.split('\n')
-            formatted_lines = []
-            
-            for line in lines:
-                if not line:  # 空行
-                    formatted_lines.append("")
-                    continue
-                    
-                # 处理不同类型的输出
-                if any(keyword in line.lower() for keyword in ['error', 'failed', '错误', '失败']):
-                    formatted_line = f"[{timestamp}] ❌ {line}"
-                elif any(keyword in line.lower() for keyword in ['warning', 'warn', '警告']):
-                    formatted_line = f"[{timestamp}] ⚠️ {line}"
-                elif any(keyword in line.lower() for keyword in ['success', 'ok', '成功', '完成']):
-                    formatted_line = f"[{timestamp}] ✅ {line}"
-                elif any(keyword in line.lower() for keyword in ['checking', '检查']):
-                    formatted_line = f"[{timestamp}] 🔍 {line}"
-                else:
-                    formatted_line = f"[{timestamp}] {line}"
-                    
-                formatted_lines.append(formatted_line)
-            
-            # 重新组合文本
-            formatted_text = '\n'.join(formatted_lines)
-            
-            # 如果原始文本以换行符结尾，确保格式化文本也如此
-            if text.endswith('\n') and not formatted_text.endswith('\n'):
-                formatted_text += '\n'
-        
-        # 插入文本
-        self.output_text.insert(tk.END, formatted_text)
+        # 直接插入文本，不做额外格式化（因为输出已经带有时间戳）
+        self.output_text.insert(tk.END, text)
         self.output_text.see(tk.END)
         
         # 更新行号
         self.update_line_numbers()
         
     def _insert_direct_text(self, text):
-        """直接插入文本，不添加时间戳（用于已经格式化的输出）"""
-        if text.strip():  # 只插入非空内容
+        """直接插入文本，完全保持原始格式"""
+        if text:  # 插入所有内容，包括空格和空行
             self.output_text.insert(tk.END, text)
             self.output_text.see(tk.END)
             self.update_line_numbers()
