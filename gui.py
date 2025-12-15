@@ -17,7 +17,7 @@ import re
 class PhoneAgentGUI:
     def __init__(self, root):
         self.root = root
-        self.root.title("鸡哥手机助手 V0.2 - AI手机自动化工具")
+        self.root.title("鸡哥手机助手 v0.3 - AI手机自动化工具")
         self.root.geometry("1000x750")
         self.root.minsize(900, 650)
         
@@ -204,7 +204,7 @@ class PhoneAgentGUI:
         
         # 时间显示
         self.time_var = tk.StringVar(value="")
-        time_label = ttk.Label(status_frame, textvariable=self.time_var, relief=tk.SUNKEN, anchor=tk.E, width=20)
+        time_label = ttk.Label(status_frame, textvariable=self.time_var, relief=tk.SUNKEN, anchor=tk.E, width=25)
         time_label.grid(row=0, column=1, sticky=(tk.E))
         
         # 更新时间
@@ -215,7 +215,7 @@ class PhoneAgentGUI:
         
     def update_time(self):
         """更新时间显示"""
-        current_time = datetime.now().strftime("%H:%M:%S")
+        current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         self.time_var.set(current_time)
         self.root.after(1000, self.update_time)
         
@@ -270,17 +270,33 @@ class PhoneAgentGUI:
             from phone_agent.agent import PhoneAgent, AgentConfig
             from phone_agent.model import ModelConfig
             from phone_agent.adb import ADBConnection, list_devices
-            
-            # 解析设备ID
-            device_id = None
-            if selected_device:
-                device_id = selected_device.split(' ')[0]
+            # 从main.py导入检查函数
+            import main
             
             # 使用线程安全的输出函数
             def safe_output(text):
                 if text:
                     # 直接插入到GUI，不做任何格式化处理
                     self.root.after(0, self._insert_direct_text, text)
+            
+            # 先进行系统要求检查
+            safe_output("🔍 检查系统要求...\n")
+            if not main.check_system_requirements():
+                safe_output("❌ 系统要求检查失败，请检查ADB和设备连接\n")
+                self.root.after(0, self._process_finished, -1)
+                return
+            
+            # 检查模型API连通性
+            safe_output("🔍 检查模型API连通性...\n") 
+            if not main.check_model_api(base_url, model, apikey):
+                safe_output("❌ 模型API检查失败，请检查网络连接和API配置\n")
+                self.root.after(0, self._process_finished, -1)
+                return
+            
+            # 解析设备ID
+            device_id = None
+            if selected_device:
+                device_id = selected_device.split(' ')[0]
             
             # 在打包环境中设置subprocess创建标志，避免弹窗
             import subprocess
