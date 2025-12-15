@@ -29,7 +29,7 @@ python run_gui.py
 
 ### 方法2: 直接运行GUI   
 ```bash
-python gui.py    
+PhoneAgentGUI.exe  
 ```
 ## 参数说明
 
