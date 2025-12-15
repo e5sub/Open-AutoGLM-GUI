@@ -98,4 +98,4 @@ python gui.py
 4. 点击"运行"按钮
 5. 等待程序执行完成
 
-如有问题，请查看原始项目的README文件或查看程序输出中的错误信息。
+如有问题，请查看原始项目的[README文件](https://github.com/zai-org/Open-AutoGLM/blob/main/README.md)或查看程序输出中的错误信息。
