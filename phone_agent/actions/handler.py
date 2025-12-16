@@ -283,7 +283,13 @@ def parse_action(response: str) -> dict[str, Any]:
     """
     try:
         response = response.strip()
-        if response.startswith("do"):
+        if response.startswith('do(action="Type"') or response.startswith(
+            'do(action="Type_Name"'
+        ):
+            text = response.split("text=", 1)[1][1:-2]
+            action = {"_metadata": "do", "action": "Type", "text": text}
+            return action
+        elif response.startswith("do"):
             # Use AST parsing instead of eval for safety
             try:
                 tree = ast.parse(response, mode="eval")

@@ -27,7 +27,7 @@ import re
 class PhoneAgentGUI:
     def __init__(self, root):
         self.root = root
-        self.root.title("鸡哥手机助手 v0.5 - AI手机自动化工具")
+        self.root.title("鸡哥手机助手 v0.6 - 更多好玩的工具请关注微信公众号：菜芽创作小助手")
         self.root.geometry("1000x750")
         self.root.minsize(900, 650)
         
@@ -76,22 +76,71 @@ class PhoneAgentGUI:
         """异步初始化剩余组件"""
         try:
             # 延迟创建完整界面
-            self.root.after(100, self.create_full_widgets)
+            self.root.after(50, self.create_full_widgets)
             
             # 延迟加载配置
-            self.root.after(200, self.load_config_async)
+            self.root.after(150, self.load_config_async)
             
         except Exception as e:
             print(f"异步初始化错误: {e}")
     
     def load_config_async(self):
-        """异步加载配置"""
+        """异步加载配置，避免阻塞启动"""
+        threading.Thread(target=self._background_load_config, daemon=True).start()
+                
+    def _background_load_config(self):
+        """后台线程中加载配置"""
         try:
-            self.load_config()
-            self.status_var.set("✅ 配置已加载")
+            config_data = None
+            config_file_path = self.config_file
+            
+            # 检查配置文件是否存在
+            if os.path.exists(config_file_path):
+                with open(config_file_path, 'r', encoding='utf-8') as f:
+                    config_data = json.load(f)
+            
+            # 在主线程中应用配置
+            if config_data:
+                self.root.after(0, lambda: self._apply_config(config_data))
+            else:
+                self.root.after(0, self._create_default_config)
+                
         except Exception as e:
+            print(f"后台加载配置失败: {str(e)}")
             if hasattr(self, 'status_var'):
-                self.status_var.set("⚠️ 配置加载失败")
+                self.root.after(0, lambda: self.status_var.set("⚠️ 配置加载失败"))
+                
+    def _apply_config(self, config):
+        """在主线程中应用配置"""
+        try:
+            self.base_url.set(config.get('base_url', 'https://open.bigmodel.cn/api/paas/v4'))
+            self.model.set(config.get('model', 'autoglm-phone'))
+            self.apikey.set(config.get('apikey', 'your-bigmodel-api-key'))
+            task_text = config.get('task', '输入你想要执行的任务，例如：打开美团搜索附近的火锅店')
+            self.task.set(task_text)
+            
+            # 如果界面已创建，更新任务文本框
+            if hasattr(self, 'task_text'):
+                self.task_text.delete("1.0", tk.END)
+                self.task_text.insert("1.0", task_text)
+            
+            # 恢复选中的设备
+            selected_device = config.get('selected_device', '')
+            if selected_device and hasattr(self, 'selected_device_id'):
+                self.selected_device_id.set(selected_device)
+            
+            if hasattr(self, 'status_var'):
+                self.status_var.set("✅ 配置已加载")
+                
+        except Exception as e:
+            print(f"应用配置失败: {str(e)}")
+            if hasattr(self, 'status_var'):
+                self.status_var.set("⚠️ 配置应用失败")
+                
+    def _create_default_config(self):
+        """创建默认配置"""
+        if hasattr(self, 'status_var'):
+            self.status_var.set("📝 使用默认配置")
         
     def setup_styles(self):
         """设置界面样式"""
@@ -124,7 +173,7 @@ class PhoneAgentGUI:
     def create_full_widgets(self):
         """创建完整界面组件（异步加载）"""
         try:
-            # 移除启动提示
+            # 快速移除启动提示，避免界面闪烁
             if hasattr(self, 'startup_label'):
                 self.startup_label.destroy()
             
@@ -261,8 +310,8 @@ class PhoneAgentGUI:
             # 更新时间
             self.update_time()
             
-            # 初始刷新设备列表（在所有组件创建完成后）
-            self.refresh_devices()
+            # 延迟刷新设备列表，避免阻塞启动
+            self.root.after(500, self.async_refresh_devices)
             
         except Exception as e:
             print(f"创建完整界面时出错: {e}")
@@ -724,6 +773,43 @@ class PhoneAgentGUI:
         self.status_var.set("✅ 输出已清空")
         
     # ADB相关方法
+    def async_refresh_devices(self):
+        """异步刷新ADB设备列表，避免阻塞界面"""
+        # 在后台线程中执行设备扫描
+        threading.Thread(target=self._background_refresh_devices, daemon=True).start()
+        
+        # 立即显示"正在扫描"状态
+        if hasattr(self, 'device_status_label'):
+            self.device_status_label.config(text="🔄 正在扫描设备...", foreground='blue')
+            
+    def _background_refresh_devices(self):
+        """后台线程中刷新设备列表"""
+        try:
+            # 在后台线程中执行ADB命令
+            result = self._run_adb_silent(['adb', 'devices'])
+            
+            if result.returncode == 0:
+                self.connected_devices = self._parse_device_list(result.stdout)
+                # 在主线程中更新界面
+                self.root.after(0, self._update_device_display)
+            else:
+                self.root.after(0, lambda: self._append_output("❌ ADB命令执行失败\n"))
+                if hasattr(self, 'device_status_label'):
+                    self.root.after(0, lambda: self.device_status_label.config(text="ADB错误", foreground='red'))
+                    
+        except subprocess.TimeoutExpired:
+            self.root.after(0, lambda: self._append_output("❌ ADB命令超时\n"))
+            if hasattr(self, 'device_status_label'):
+                self.root.after(0, lambda: self.device_status_label.config(text="ADB超时", foreground='red'))
+        except FileNotFoundError:
+            self.root.after(0, lambda: self._append_output("❌ 未找到ADB，请检查Android SDK是否安装\n"))
+            if hasattr(self, 'device_status_label'):
+                self.root.after(0, lambda: self.device_status_label.config(text="ADB未安装", foreground='red'))
+        except Exception as e:
+            self.root.after(0, lambda: self._append_output(f"❌ 扫描设备失败: {str(e)}\n"))
+            if hasattr(self, 'device_status_label'):
+                self.root.after(0, lambda: self.device_status_label.config(text="扫描失败", foreground='red'))
+                
     def refresh_devices(self):
         """刷新ADB设备列表"""
         try:
@@ -1233,7 +1319,7 @@ class PhoneAgentGUI:
                 import os
                 
                 # 下载二维码图片
-                qrcode_url = "https://gh-proxy.org/https://raw.githubusercontent.com/e5sub/Open-AutoGLM-GUI/master/gzh.png"
+                qrcode_url = "https://docker.071717.xyz/https://raw.githubusercontent.com/e5sub/Open-AutoGLM-GUI/master/gzh.png"
                 
                 def load_qrcode():
                     try:
