@@ -27,7 +27,7 @@ import re
 class PhoneAgentGUI:
     def __init__(self, root):
         self.root = root
-        self.root.title("鸡哥手机助手 v0.7 - 更多好玩的工具请关注微信公众号：菜芽创作小助手")
+        self.root.title("鸡哥手机助手 v0.8 - 更多好玩的工具请关注微信公众号：菜芽创作小助手")
         self.root.geometry("1000x750")
         self.root.minsize(900, 650)
         
@@ -62,6 +62,9 @@ class PhoneAgentGUI:
         
         # 异步加载剩余组件和配置
         threading.Thread(target=self.async_initialization, daemon=True).start()
+        
+        # 设置程序关闭时的自动保存
+        self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
     
     def show_startup_message(self):
         """显示启动提示"""
@@ -221,7 +224,16 @@ class PhoneAgentGUI:
             
             # 设置初始任务文本
             self.task_text.insert("1.0", self.task.get())
-            self.task_text.bind("<KeyRelease>", lambda e: self.task.set(self.task_text.get("1.0", tk.END).strip()))
+            self.task_text.bind("<KeyRelease>", lambda e: self.on_task_change())
+            
+            # Base URL变化时自动保存
+            url_entry.bind("<KeyRelease>", lambda e: self.on_config_change())
+            
+            # Model变化时自动保存  
+            model_entry.bind("<KeyRelease>", lambda e: self.on_config_change())
+            
+            # API Key变化时自动保存
+            self.apikey_entry.bind("<KeyRelease>", lambda e: self.on_config_change())
             
             # ADB设备区域
             adb_frame = ttk.LabelFrame(self.main_frame, text="📱 ADB设备管理", style='Card.TFrame', padding="8")
@@ -248,6 +260,9 @@ class PhoneAgentGUI:
             self.device_combo = ttk.Combobox(device_select_frame, textvariable=self.selected_device_id, 
                                           state="readonly", font=('Microsoft YaHei', 9))
             self.device_combo.grid(row=0, column=0, sticky=(tk.W, tk.E))
+            
+            # 设备选择变化时自动保存配置
+            self.device_combo.bind("<<ComboboxSelected>>", lambda e: self.on_device_change())
             
             self.device_status_label = ttk.Label(device_select_frame, text="未检测到设备", 
                                             font=('Microsoft YaHei', 9), foreground='red')
@@ -655,7 +670,15 @@ class PhoneAgentGUI:
                 'model': self.model.get(),
                 'apikey': self.apikey.get(),
                 'task': self.task_text.get("1.0", tk.END).strip(),
-                'selected_device': self.selected_device_id.get()
+                'selected_device': self.selected_device_id.get(),
+                'remote_connection': getattr(self, 'last_remote_connection', {
+                    'ip': '192.168.1.100',
+                    'port': '5555'
+                }),
+                'wireless_pair': getattr(self, 'last_wireless_pair', {
+                    'pair_address': '10.10.10.100:41717',
+                    'connect_address': '10.10.10.100:5555'
+                })
             }
             
             with open(self.config_file, 'w', encoding='utf-8') as f:
@@ -667,6 +690,31 @@ class PhoneAgentGUI:
         except Exception as e:
             messagebox.showerror("错误", f"保存配置失败: {str(e)}")
             self.status_var.set("❌ 保存配置失败")
+    
+    def save_config_silent(self):
+        """静默保存配置到文件，不显示消息"""
+        try:
+            config = {
+                'base_url': self.base_url.get(),
+                'model': self.model.get(),
+                'apikey': self.apikey.get(),
+                'task': self.task_text.get("1.0", tk.END).strip(),
+                'selected_device': self.selected_device_id.get(),
+                'remote_connection': getattr(self, 'last_remote_connection', {
+                    'ip': '192.168.1.100',
+                    'port': '5555'
+                }),
+                'wireless_pair': getattr(self, 'last_wireless_pair', {
+                    'pair_address': '10.10.10.100:41717',
+                    'connect_address': '10.10.10.100:5555'
+                })
+            }
+            
+            with open(self.config_file, 'w', encoding='utf-8') as f:
+                json.dump(config, f, ensure_ascii=False, indent=2)
+                
+        except Exception:
+            pass  # 静默忽略错误
             
     def load_config(self):
         """从文件加载配置"""
@@ -690,6 +738,18 @@ class PhoneAgentGUI:
                 selected_device = config.get('selected_device', '')
                 if selected_device and hasattr(self, 'selected_device_id'):
                     self.selected_device_id.set(selected_device)
+                
+                # 加载远程连接配置
+                self.last_remote_connection = config.get('remote_connection', {
+                    'ip': '192.168.1.100',
+                    'port': '5555'
+                })
+                
+                # 加载无线调试配对配置
+                self.last_wireless_pair = config.get('wireless_pair', {
+                    'pair_address': '10.10.10.100:41717',
+                    'connect_address': '10.10.10.100:5555'
+                })
                 
                 self.status_var.set("✅ 配置已加载")
                 
@@ -722,6 +782,18 @@ class PhoneAgentGUI:
                 selected_device = config.get('selected_device', '')
                 if selected_device:
                     self.selected_device_id.set(selected_device)
+                
+                # 加载远程连接配置
+                self.last_remote_connection = config.get('remote_connection', {
+                    'ip': '192.168.1.100',
+                    'port': '5555'
+                })
+                
+                # 加载无线调试配对配置
+                self.last_wireless_pair = config.get('wireless_pair', {
+                    'pair_address': '10.10.10.100:41717',
+                    'connect_address': '10.10.10.100:5555'
+                })
                 
                 messagebox.showinfo("成功", "配置已成功加载")
                 self.status_var.set("✅ 从文件加载配置")
@@ -771,6 +843,36 @@ class PhoneAgentGUI:
     def clear_output(self):
         self.output_text.delete("1.0", tk.END)
         self.status_var.set("✅ 输出已清空")
+    
+    def _run_adb_silent(self, cmd, timeout=10):
+        """静默运行ADB命令，不显示控制台窗口"""
+        try:
+            # 在Windows上隐藏控制台窗口
+            if os.name == 'nt':
+                # 设置CREATE_NO_WINDOW标志来隐藏控制台窗口
+                creationflags = subprocess.CREATE_NO_WINDOW
+            else:
+                creationflags = 0
+            
+            result = subprocess.run(cmd, capture_output=True, text=True, 
+                                  timeout=timeout, creationflags=creationflags)
+            return result
+        except subprocess.TimeoutExpired:
+            # 返回一个模拟的结果对象
+            class TimeoutResult:
+                def __init__(self):
+                    self.returncode = -1
+                    self.stdout = ""
+                    self.stderr = f"Command timed out after {timeout} seconds"
+            return TimeoutResult()
+        except Exception as e:
+            # 返回一个模拟的结果对象
+            class ErrorResult:
+                def __init__(self, error):
+                    self.returncode = -1
+                    self.stdout = ""
+                    self.stderr = str(error)
+            return ErrorResult(str(e))
         
     # ADB相关方法
     def async_refresh_devices(self):
@@ -838,6 +940,9 @@ class PhoneAgentGUI:
     def _parse_device_list(self, adb_output):
         """解析ADB设备列表输出"""
         devices = []
+        if not adb_output:
+            return devices
+        
         lines = adb_output.strip().split('\n')
         
         for line in lines[1:]:  # 跳过标题行
@@ -862,21 +967,21 @@ class PhoneAgentGUI:
             # 获取设备型号
             model_result = self._run_adb_silent(['adb', '-s', device_id, 'shell', 'getprop', 'ro.product.model'], timeout=5)
             if model_result.returncode == 0:
-                info['model'] = model_result.stdout.strip()
+                info['model'] = model_result.stdout.strip() if model_result.stdout else ''
                 
             # 获取Android版本
             version_result = self._run_adb_silent(['adb', '-s', device_id, 'shell', 'getprop', 'ro.build.version.release'], timeout=5)
             if version_result.returncode == 0:
-                info['android_version'] = version_result.stdout.strip()
+                info['android_version'] = version_result.stdout.strip() if version_result.stdout else ''
                 
             # 获取设备制造商
             manufacturer_result = self._run_adb_silent(['adb', '-s', device_id, 'shell', 'getprop', 'ro.product.manufacturer'], timeout=5)
             if manufacturer_result.returncode == 0:
-                info['manufacturer'] = manufacturer_result.stdout.strip()
+                info['manufacturer'] = manufacturer_result.stdout.strip() if manufacturer_result.stdout else ''
                 
             # 获取IP地址
             ip_result = self._run_adb_silent(['adb', '-s', device_id, 'shell', 'ip', 'addr', 'show', 'wlan0'], timeout=5)
-            if ip_result.returncode == 0:
+            if ip_result.returncode == 0 and ip_result.stdout:
                 ip_match = re.search(r'inet (\d+\.\d+\.\d+\.\d+)', ip_result.stdout)
                 if ip_match:
                     info['ip'] = ip_match.group(1)
@@ -1002,6 +1107,11 @@ class PhoneAgentGUI:
                 dialog.destroy()
                 self.connect_remote_device()
                 
+            def do_connect_wireless_pair():
+                """无线调试配对连接"""
+                dialog.destroy()
+                self.connect_wireless_pair_device()
+                
             def do_refresh_devices():
                 """刷新设备"""
                 self._append_output("🔄 正在重新扫描设备...\n")
@@ -1035,6 +1145,9 @@ class PhoneAgentGUI:
                           
             ttk.Button(buttons_row1, text="📡 添加远程设备", 
                       command=do_connect_remote, style='Success.TButton').pack(side=tk.LEFT, padx=(0, 8))
+                      
+            ttk.Button(buttons_row1, text="🔗 无线调试配对", 
+                      command=do_connect_wireless_pair, style='Success.TButton').pack(side=tk.LEFT, padx=(0, 8))
             
             buttons_row2 = ttk.Frame(button_frame)
             buttons_row2.pack(fill=tk.X, pady=5)
@@ -1120,9 +1233,13 @@ class PhoneAgentGUI:
         config_frame = ttk.LabelFrame(main_frame, text="🔗 设备连接配置", style='Card.TFrame', padding="8")
         config_frame.pack(fill=tk.X, pady=(10, 15))
         
-        # IP地址输入
+        # IP地址输入 - 使用上次连接的配置
+        default_ip = getattr(self, 'last_remote_connection', {}).get('ip', '192.168.1.100')
+        default_port = getattr(self, 'last_remote_connection', {}).get('port', '5555')
+        default_address = f"{default_ip}:{default_port}"
+        
         ttk.Label(config_frame, text="🌐 设备地址:", font=('Microsoft YaHei', 9, 'bold')).grid(row=0, column=0, sticky=tk.W, pady=5)
-        ip_var = tk.StringVar(value="192.168.1.100:5555")
+        ip_var = tk.StringVar(value=default_address)
         ip_entry = ttk.Entry(config_frame, textvariable=ip_var, width=25, font=('Microsoft YaHei', 10))
         ip_entry.grid(row=0, column=1, sticky=(tk.W, tk.E), padx=(10, 0), pady=5)
         config_frame.columnconfigure(1, weight=1)
@@ -1137,12 +1254,27 @@ class PhoneAgentGUI:
                     result = subprocess.run(['adb', 'connect', ip_address],
                                         capture_output=True, text=True, timeout=15)
                     if result.returncode == 0:
-                        self._append_output(f"✅ 连接成功: {result.stdout.strip()}\n")
+                        self._append_output(f"✅ 连接成功: {result.stdout.strip() if result.stdout else ''}\n")
+                        
+                        # 保存成功的连接信息
+                        if ':' in ip_address:
+                            ip, port = ip_address.rsplit(':', 1)
+                            self.last_remote_connection = {
+                                'ip': ip,
+                                'port': port
+                            }
+                            # 自动保存配置
+                            try:
+                                self.save_config_silent()
+                            except:
+                                pass  # 忽略保存错误，不影响连接成功
+                        
                         self.refresh_devices()
                         dialog.destroy()
                     else:
-                        self._append_output(f"❌ 连接失败: {result.stderr.strip()}\n")
-                        messagebox.showerror("连接失败", result.stderr.strip())
+                        error_msg = result.stderr.strip() if result.stderr else f"连接失败，返回码: {result.returncode}"
+                        self._append_output(f"❌ 连接失败: {error_msg}\n")
+                        messagebox.showerror("连接失败", error_msg)
                 except Exception as e:
                     self._append_output(f"❌ 连接异常: {str(e)}\n")
                     messagebox.showerror("连接异常", str(e))
@@ -1174,15 +1306,19 @@ class PhoneAgentGUI:
         config_frame = ttk.LabelFrame(main_frame, text="📡 远程设备配置", style='Card.TFrame', padding="8")
         config_frame.pack(fill=tk.X, pady=(10, 15))
         
-        # IP地址和端口输入
+        # IP地址和端口输入 - 使用上次连接的配置
+        last_remote = getattr(self, 'last_remote_connection', {})
+        default_ip = last_remote.get('ip', '192.168.1.100')
+        default_port = last_remote.get('port', '5555')
+        
         ttk.Label(config_frame, text="🌐 设备IP地址:", font=('Microsoft YaHei', 9, 'bold')).grid(row=0, column=0, sticky=tk.W, pady=5)
-        ip_var = tk.StringVar(value="192.168.1.100")
+        ip_var = tk.StringVar(value=default_ip)
         ip_entry = ttk.Entry(config_frame, textvariable=ip_var, width=25, font=('Microsoft YaHei', 10))
         ip_entry.grid(row=0, column=1, sticky=(tk.W, tk.E), padx=(10, 0), pady=5)
         config_frame.columnconfigure(1, weight=1)
         
         ttk.Label(config_frame, text="🔌 端口号:", font=('Microsoft YaHei', 9, 'bold')).grid(row=1, column=0, sticky=tk.W, pady=5)
-        port_var = tk.StringVar(value="5555")
+        port_var = tk.StringVar(value=default_port)
         port_entry = ttk.Entry(config_frame, textvariable=port_var, width=10, font=('Microsoft YaHei', 10))
         port_entry.grid(row=1, column=1, sticky=tk.W, padx=(10, 0), pady=5)
         
@@ -1209,12 +1345,25 @@ class PhoneAgentGUI:
                     result = subprocess.run(['adb', 'connect', remote_address],
                                         capture_output=True, text=True, timeout=15)
                     if result.returncode == 0:
-                        self._append_output(f"✅ 远程连接成功: {result.stdout.strip()}\n")
+                        self._append_output(f"✅ 远程连接成功: {result.stdout.strip() if result.stdout else ''}\n")
+                        
+                        # 保存成功的连接信息
+                        self.last_remote_connection = {
+                            'ip': ip_address,
+                            'port': port
+                        }
+                        # 自动保存配置
+                        try:
+                            self.save_config_silent()
+                        except:
+                            pass  # 忽略保存错误，不影响连接成功
+                        
                         self.refresh_devices()
                         dialog.destroy()
                     else:
-                        self._append_output(f"❌ 远程连接失败: {result.stderr.strip()}\n")
-                        messagebox.showerror("连接失败", result.stderr.strip())
+                        error_msg = result.stderr.strip() if result.stderr else f"连接失败，返回码: {result.returncode}"
+                        self._append_output(f"❌ 远程连接失败: {error_msg}\n")
+                        messagebox.showerror("连接失败", error_msg)
                 except subprocess.TimeoutExpired:
                     self._append_output(f"❌ 连接超时: {remote_address}\n")
                     messagebox.showerror("连接超时", f"连接 {remote_address} 超时")
@@ -1230,6 +1379,140 @@ class PhoneAgentGUI:
         
         ttk.Button(button_frame, text="🌐 远程连接", command=do_remote_connect, style='Success.TButton').pack(side=tk.LEFT, padx=5)
         ttk.Button(button_frame, text="❌ 取消", command=dialog.destroy, style='Danger.TButton').pack(side=tk.LEFT, padx=5)
+        
+        # 添加无线调试配对按钮
+        def do_wireless_pair():
+            dialog.destroy()
+            self.connect_wireless_pair_device()
+            
+    def connect_wireless_pair_device(self):
+        """无线调试配对连接（Android 11+）"""
+        dialog = tk.Toplevel(self.root)
+        dialog.title("无线调试配对连接")
+        dialog.geometry("450x320")
+        dialog.resizable(True, True)
+        
+        # 设置窗口居中显示
+        dialog.update_idletasks()
+        x = (dialog.winfo_screenwidth() // 2) - (450 // 2)
+        y = (dialog.winfo_screenheight() // 2) - (320 // 2)
+        dialog.geometry(f"450x320+{x}+{y}")
+        
+        # 主框架
+        main_frame = ttk.Frame(dialog, padding="15")
+        main_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # 简化说明
+        info_label = ttk.Label(main_frame, text="📱 Android 11+ 无线调试配对", 
+                              font=('Microsoft YaHei', 11, 'bold'))
+        info_label.pack(pady=(0, 15))
+        
+        # 输入区域
+        input_frame = ttk.Frame(main_frame)
+        input_frame.pack(fill=tk.X, pady=(0, 20))
+        
+        # 使用上次配对的配置
+        last_pair = getattr(self, 'last_wireless_pair', {})
+        default_pair_address = last_pair.get('pair_address', '10.10.10.100:41717')
+        default_connect_address = last_pair.get('connect_address', '10.10.10.100:5555')
+        
+        # 配对IP和端口
+        ttk.Label(input_frame, text="🌐 配对地址 (IP:端口):", font=('Microsoft YaHei', 10)).grid(row=0, column=0, sticky=tk.W, pady=8)
+        pair_address_var = tk.StringVar(value=default_pair_address)
+        pair_address_entry = ttk.Entry(input_frame, textvariable=pair_address_var, width=30, font=('Microsoft YaHei', 10))
+        pair_address_entry.grid(row=0, column=1, sticky=(tk.W, tk.E), padx=(10, 0), pady=8)
+        
+        # 配对码
+        ttk.Label(input_frame, text="🔑 配对码 (6位数字):", font=('Microsoft YaHei', 10)).grid(row=1, column=0, sticky=tk.W, pady=8)
+        pair_code_var = tk.StringVar()
+        pair_code_entry = ttk.Entry(input_frame, textvariable=pair_code_var, width=15, font=('Microsoft YaHei', 12))
+        pair_code_entry.grid(row=1, column=1, sticky=tk.W, padx=(10, 0), pady=8)
+        
+        # 连接地址
+        ttk.Label(input_frame, text="📡 连接地址 (IP:端口):", font=('Microsoft YaHei', 10)).grid(row=2, column=0, sticky=tk.W, pady=8)
+        connect_address_var = tk.StringVar(value=default_connect_address)
+        connect_address_entry = ttk.Entry(input_frame, textvariable=connect_address_var, width=30, font=('Microsoft YaHei', 10))
+        connect_address_entry.grid(row=2, column=1, sticky=(tk.W, tk.E), padx=(10, 0), pady=8)
+        
+        input_frame.columnconfigure(1, weight=1)
+        
+        def do_pair_connect():
+            """执行配对和连接"""
+            pair_address = pair_address_var.get().strip()
+            pair_code = pair_code_var.get().strip()
+            connect_address = connect_address_var.get().strip()
+            
+            if not pair_address or not pair_code or not connect_address:
+                messagebox.showwarning("输入错误", "请填写所有必要信息")
+                return
+            
+            self._append_output(f"🔗 开始配对: {pair_address}\n")
+            self._append_output(f"🔑 配对码: {pair_code}\n")
+            
+            try:
+                # 第一步：配对
+                pair_result = subprocess.run(['adb', 'pair', pair_address],
+                                           input=pair_code + '\n',
+                                           capture_output=True, text=True, timeout=30)
+                
+                if pair_result.returncode == 0:
+                    self._append_output(f"✅ 配对成功: {pair_result.stdout.strip() if pair_result.stdout else ''}\n")
+                    
+                    # 第二步：连接
+                    self._append_output(f"🌐 连接设备: {connect_address}\n")
+                    connect_result = subprocess.run(['adb', 'connect', connect_address],
+                                                  capture_output=True, text=True, timeout=15)
+                    
+                    if connect_result.returncode == 0:
+                        self._append_output(f"✅ 连接成功: {connect_result.stdout.strip() if connect_result.stdout else ''}\n")
+                        
+                        # 保存成功的配对信息
+                        self.last_wireless_pair = {
+                            'pair_address': pair_address,
+                            'connect_address': connect_address
+                        }
+                        # 同时更新远程连接配置（从连接地址中提取IP和端口）
+                        if ':' in connect_address:
+                            ip, port = connect_address.rsplit(':', 1)
+                            self.last_remote_connection = {
+                                'ip': ip,
+                                'port': port
+                            }
+                        
+                        # 自动保存配置
+                        try:
+                            self.save_config_silent()
+                        except:
+                            pass  # 忽略保存错误，不影响连接成功
+                        
+                        self.refresh_devices()
+                        dialog.destroy()
+                        messagebox.showinfo("成功", "无线调试配对连接成功！")
+                    else:
+                        error_msg = connect_result.stderr.strip() if connect_result.stderr else f"连接失败，返回码: {connect_result.returncode}"
+                        self._append_output(f"❌ 连接失败: {error_msg}\n")
+                        messagebox.showerror("连接失败", error_msg)
+                else:
+                    error_msg = pair_result.stderr.strip() if pair_result.stderr else f"配对失败，返回码: {pair_result.returncode}"
+                    self._append_output(f"❌ 配对失败: {error_msg}\n")
+                    messagebox.showerror("配对失败", error_msg)
+                    
+            except Exception as e:
+                self._append_output(f"❌ 操作异常: {str(e)}\n")
+                messagebox.showerror("异常错误", str(e))
+        
+        # 按钮区域 - 确保在底部可见
+        button_frame = ttk.Frame(dialog)
+        button_frame.pack(side=tk.BOTTOM, fill=tk.X, padx=15, pady=15)
+        
+        # 创建按钮
+        ttk.Button(button_frame, text="🔑 开始配对连接", command=do_pair_connect, 
+                  style='Success.TButton', width=20).pack(side=tk.LEFT, padx=(0, 10))
+        ttk.Button(button_frame, text="❌ 取消", command=dialog.destroy, 
+                  style='Danger.TButton', width=12).pack(side=tk.LEFT)
+        
+        # 设置焦点到配对码输入框
+        pair_code_entry.focus()
         
     def install_adb_keyboard(self):
         """安装ADB键盘应用"""
@@ -1262,7 +1545,7 @@ class PhoneAgentGUI:
                                           capture_output=True, text=True, timeout=60)
             
             if install_result.returncode == 0:
-                self._append_output(f"✅ ADB键盘安装成功: {install_result.stdout.strip()}\n")
+                self._append_output(f"✅ ADB键盘安装成功: {install_result.stdout.strip() if install_result.stdout else ''}\n")
                 
                 # 设置为默认输入法
                 self._append_output("🔧 正在设置ADB键盘为默认输入法...\n")
@@ -1282,14 +1565,17 @@ class PhoneAgentGUI:
                         self._append_output("✅ ADB键盘已设置为默认输入法\n")
                         messagebox.showinfo("安装成功", "ADB键盘安装并设置成功！")
                     else:
-                        self._append_output(f"⚠️ 设置默认输入法失败: {switch_result.stderr.strip()}\n")
+                        error_msg = switch_result.stderr.strip() if switch_result.stderr else f"设置失败，返回码: {switch_result.returncode}"
+                        self._append_output(f"⚠️ 设置默认输入法失败: {error_msg}\n")
                         messagebox.showwarning("部分成功", "键盘安装成功，但设置为默认输入法失败，请手动设置。")
                 else:
-                    self._append_output(f"⚠️ 启用ADB键盘失败: {settings_result.stderr.strip()}\n")
+                    error_msg = settings_result.stderr.strip() if settings_result.stderr else f"启用失败，返回码: {settings_result.returncode}"
+                    self._append_output(f"⚠️ 启用ADB键盘失败: {error_msg}\n")
                     messagebox.showwarning("部分成功", "键盘安装成功，但启用失败，请手动启用。")
             else:
-                self._append_output(f"❌ ADB键盘安装失败: {install_result.stderr.strip()}\n")
-                messagebox.showerror("安装失败", install_result.stderr.strip())
+                error_msg = install_result.stderr.strip() if install_result.stderr else f"安装失败，返回码: {install_result.returncode}"
+                self._append_output(f"❌ ADB键盘安装失败: {error_msg}\n")
+                messagebox.showerror("安装失败", error_msg)
                 
         except subprocess.TimeoutExpired:
             self._append_output("❌ 安装超时，请检查设备连接\n")
@@ -1501,6 +1787,230 @@ class PhoneAgentGUI:
         self.qrcode_window.destroy()
         self.qrcode_window = None
         self._append_output("✅ 二维码窗口已关闭\n")
+    
+    def connect_wireless_pair_device(self):
+        """无线调试配对连接（Android 11+）"""
+        dialog = tk.Toplevel(self.root)
+        dialog.title("无线调试配对连接")
+        dialog.geometry("450x320")
+        dialog.resizable(True, True)
+        
+        # 设置窗口居中显示
+        dialog.update_idletasks()
+        x = (dialog.winfo_screenwidth() // 2) - (450 // 2)
+        y = (dialog.winfo_screenheight() // 2) - (320 // 2)
+        dialog.geometry(f"450x320+{x}+{y}")
+        
+        # 主框架
+        main_frame = ttk.Frame(dialog, padding="15")
+        main_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # 简化说明
+        info_label = ttk.Label(main_frame, text="📱 Android 11+ 无线调试配对", 
+                              font=('Microsoft YaHei', 11, 'bold'))
+        info_label.pack(pady=(0, 15))
+        
+        # 输入区域
+        input_frame = ttk.Frame(main_frame)
+        input_frame.pack(fill=tk.X, pady=(0, 20))
+        
+        # 使用上次配对的配置
+        last_pair = getattr(self, 'last_wireless_pair', {})
+        default_pair_address = last_pair.get('pair_address', '10.10.10.100:41717')
+        default_connect_address = last_pair.get('connect_address', '10.10.10.100:5555')
+        
+        # 配对IP和端口
+        ttk.Label(input_frame, text="🌐 配对地址 (IP:端口):", font=('Microsoft YaHei', 10)).grid(row=0, column=0, sticky=tk.W, pady=8)
+        pair_address_var = tk.StringVar(value=default_pair_address)
+        pair_address_entry = ttk.Entry(input_frame, textvariable=pair_address_var, width=30, font=('Microsoft YaHei', 10))
+        pair_address_entry.grid(row=0, column=1, sticky=(tk.W, tk.E), padx=(10, 0), pady=8)
+        
+        # 配对码
+        ttk.Label(input_frame, text="🔑 配对码 (6位数字):", font=('Microsoft YaHei', 10)).grid(row=1, column=0, sticky=tk.W, pady=8)
+        pair_code_var = tk.StringVar()
+        pair_code_entry = ttk.Entry(input_frame, textvariable=pair_code_var, width=15, font=('Microsoft YaHei', 12))
+        pair_code_entry.grid(row=1, column=1, sticky=tk.W, padx=(10, 0), pady=8)
+        
+        # 连接地址
+        ttk.Label(input_frame, text="📡 连接地址 (IP:端口):", font=('Microsoft YaHei', 10)).grid(row=2, column=0, sticky=tk.W, pady=8)
+        connect_address_var = tk.StringVar(value=default_connect_address)
+        connect_address_entry = ttk.Entry(input_frame, textvariable=connect_address_var, width=30, font=('Microsoft YaHei', 10))
+        connect_address_entry.grid(row=2, column=1, sticky=(tk.W, tk.E), padx=(10, 0), pady=8)
+        
+        input_frame.columnconfigure(1, weight=1)
+        
+        def do_pair_connect():
+            """执行配对和连接"""
+            pair_address = pair_address_var.get().strip()
+            pair_code = pair_code_var.get().strip()
+            connect_address = connect_address_var.get().strip()
+            
+            if not pair_address or not pair_code or not connect_address:
+                messagebox.showwarning("输入错误", "请填写所有必要信息")
+                return
+            
+            self._append_output(f"🔗 开始配对: {pair_address}\n")
+            self._append_output(f"🔑 配对码: {pair_code}\n")
+            
+            try:
+                # 第一步：配对
+                pair_result = subprocess.run(['adb', 'pair', pair_address],
+                                           input=pair_code + '\n',
+                                           capture_output=True, text=True, timeout=30)
+                
+                if pair_result.returncode == 0:
+                    self._append_output(f"✅ 配对成功: {pair_result.stdout.strip() if pair_result.stdout else ''}\n")
+                    
+                    # 第二步：连接
+                    self._append_output(f"🌐 连接设备: {connect_address}\n")
+                    connect_result = subprocess.run(['adb', 'connect', connect_address],
+                                                  capture_output=True, text=True, timeout=15)
+                    
+                    if connect_result.returncode == 0:
+                        self._append_output(f"✅ 连接成功: {connect_result.stdout.strip() if connect_result.stdout else ''}\n")
+                        
+                        # 保存成功的配对信息
+                        self.last_wireless_pair = {
+                            'pair_address': pair_address,
+                            'connect_address': connect_address
+                        }
+                        # 同时更新远程连接配置（从连接地址中提取IP和端口）
+                        if ':' in connect_address:
+                            ip, port = connect_address.rsplit(':', 1)
+                            self.last_remote_connection = {
+                                'ip': ip,
+                                'port': port
+                            }
+                        
+                        # 自动保存配置
+                        try:
+                            self.save_config_silent()
+                        except:
+                            pass  # 忽略保存错误，不影响连接成功
+                        
+                        self.refresh_devices()
+                        dialog.destroy()
+                        messagebox.showinfo("成功", "无线调试配对连接成功！")
+                    else:
+                        error_msg = connect_result.stderr.strip() if connect_result.stderr else f"连接失败，返回码: {connect_result.returncode}"
+                        self._append_output(f"❌ 连接失败: {error_msg}\n")
+                        messagebox.showerror("连接失败", error_msg)
+                else:
+                    error_msg = pair_result.stderr.strip() if pair_result.stderr else f"配对失败，返回码: {pair_result.returncode}"
+                    self._append_output(f"❌ 配对失败: {error_msg}\n")
+                    messagebox.showerror("配对失败", error_msg)
+                    
+            except Exception as e:
+                self._append_output(f"❌ 操作异常: {str(e)}\n")
+                messagebox.showerror("异常错误", str(e))
+        
+        # 按钮区域 - 确保在底部可见
+        button_frame = ttk.Frame(dialog)
+        button_frame.pack(side=tk.BOTTOM, fill=tk.X, padx=15, pady=15)
+        
+        # 创建按钮
+        ttk.Button(button_frame, text="🔑 开始配对连接", command=do_pair_connect, 
+                  style='Success.TButton', width=20).pack(side=tk.LEFT, padx=(0, 10))
+        ttk.Button(button_frame, text="❌ 取消", command=dialog.destroy, 
+                  style='Danger.TButton', width=12).pack(side=tk.LEFT)
+        
+        # 设置焦点到配对码输入框
+        pair_code_entry.focus()
+
+    def on_config_change(self):
+        """配置变化时自动保存（带防抖）"""
+        if not hasattr(self, '_save_timer'):
+            self._save_timer = None
+        
+        # 取消之前的定时器
+        if self._save_timer:
+            self.root.after_cancel(self._save_timer)
+        
+        # 设置新的定时器，延迟2秒后保存
+        self._save_timer = self.root.after(2000, self._auto_save_config)
+    
+    def on_task_change(self):
+        """任务文本变化时更新变量并自动保存（带防抖）"""
+        task_text = self.task_text.get("1.0", tk.END).strip()
+        self.task.set(task_text)
+        self.on_config_change()
+    
+    def on_device_change(self):
+        """设备选择变化时自动保存配置"""
+        self.on_config_change()
+    
+    def _auto_save_config(self):
+        """自动保存配置（静默保存，不显示提示）"""
+        try:
+            config = {
+                'base_url': self.base_url.get(),
+                'model': self.model.get(),
+                'apikey': self.apikey.get(),
+                'task': self.task_text.get("1.0", tk.END).strip(),
+                'selected_device': self.selected_device_id.get(),
+                'remote_connection': getattr(self, 'last_remote_connection', {
+                    'ip': '192.168.1.100',
+                    'port': '5555'
+                }),
+                'wireless_pair': getattr(self, 'last_wireless_pair', {
+                    'pair_address': '10.10.10.100:41717',
+                    'connect_address': '10.10.10.100:5555'
+                })
+            }
+            
+            with open(self.config_file, 'w', encoding='utf-8') as f:
+                json.dump(config, f, ensure_ascii=False, indent=2)
+            
+            # 静默更新状态，不显示弹窗
+            if hasattr(self, 'status_var'):
+                self.root.after(0, lambda: self.status_var.set("✅ 配置已自动保存"))
+                # 3秒后恢复状态
+                self.root.after(3000, lambda: self.status_var.set("✅ 就绪"))
+                
+        except Exception:
+            pass  # 静默忽略错误，不影响用户体验
+    
+    def on_closing(self):
+        """程序关闭时的处理，自动保存配置"""
+        try:
+            # 立即保存当前配置
+            config = {
+                'base_url': self.base_url.get(),
+                'model': self.model.get(),
+                'apikey': self.apikey.get(),
+                'task': self.task_text.get("1.0", tk.END).strip(),
+                'selected_device': self.selected_device_id.get(),
+                'remote_connection': getattr(self, 'last_remote_connection', {
+                    'ip': '192.168.1.100',
+                    'port': '5555'
+                }),
+                'wireless_pair': getattr(self, 'last_wireless_pair', {
+                    'pair_address': '10.10.10.100:41717',
+                    'connect_address': '10.10.10.100:5555'
+                })
+            }
+            
+            with open(self.config_file, 'w', encoding='utf-8') as f:
+                json.dump(config, f, ensure_ascii=False, indent=2)
+                
+        except Exception:
+            pass  # 静默忽略错误，确保程序能正常关闭
+        
+        # 如果有正在运行的任务，停止它
+        if self.running:
+            self.running = False
+            if self.process:
+                try:
+                    self.process.terminate()
+                    self.process.wait(timeout=2)
+                except:
+                    try:
+                        self.process.kill()
+                    except:
+                        pass
+        
+        # 销毁窗口，退出程序
+        self.root.destroy()
 
 
 def main():
