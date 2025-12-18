@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-打包脚本 - 将 run_gui.py 打包成 exe
+打包脚本 - 将 gui.py 打包成 exe
 """
 
 import os
@@ -14,8 +14,8 @@ def create_spec_file():
 block_cipher = None
 
 a = Analysis(
-    ['run_gui.py'],
-    pathex=['c:/Users/唐辉/Desktop/Open-AutoGLM-GUI'],
+    ['gui.py'],
+    pathex=['.'],
     binaries=[],
     datas=[
         ('adb.exe', '.'),
@@ -24,6 +24,7 @@ a = Analysis(
         ('libwinpthread-1.dll', '.'),
         ('ADBKeyboard.apk', '.'),
         ('phone_agent', 'phone_agent'),
+        ('main.py', '.'),
     ],
     hiddenimports=[
         'tkinter',
@@ -36,10 +37,29 @@ a = Analysis(
         'openai',
         'phone_agent',
         'phone_agent.agent',
+        'phone_agent.device_factory',
         'phone_agent.model',
+        'phone_agent.model.client',
         'phone_agent.adb',
+        'phone_agent.adb.connection',
+        'phone_agent.adb.device',
+        'phone_agent.adb.input',
+        'phone_agent.adb.screenshot',
+        'phone_agent.hdc',
+        'phone_agent.hdc.connection',
+        'phone_agent.hdc.device',
+        'phone_agent.hdc.input',
+        'phone_agent.hdc.screenshot',
         'phone_agent.actions',
+        'phone_agent.actions.handler',
         'phone_agent.config',
+        'phone_agent.config.apps',
+        'phone_agent.config.apps_harmonyos',
+        'phone_agent.config.i18n',
+        'phone_agent.config.prompts',
+        'phone_agent.config.prompts_zh',
+        'phone_agent.config.prompts_en',
+        'phone_agent.config.timing',
     ],
     hookspath=[],
     hooksconfig={},
@@ -84,7 +104,7 @@ exe = EXE(
 
 def build_exe():
     """执行打包命令"""
-    print("📦 开始打包 run_gui.py...")
+    print("📦 开始打包 gui.py...")
     
     # 清理之前的构建
     import shutil
@@ -105,6 +125,7 @@ def build_exe():
         '--add-data', 'libwinpthread-1.dll;.',
         '--add-data', 'ADBKeyboard.apk;.',
         '--add-data', 'phone_agent;phone_agent',
+        '--add-data', 'main.py;.',
         '--hidden-import', 'tkinter',
         '--hidden-import', 'tkinter.ttk',
         '--hidden-import', 'tkinter.scrolledtext',
@@ -115,6 +136,7 @@ def build_exe():
         '--hidden-import', 'openai',
         '--hidden-import', 'phone_agent',
         '--hidden-import', 'phone_agent.agent',
+        '--hidden-import', 'phone_agent.device_factory',
         '--hidden-import', 'phone_agent.model',
         '--hidden-import', 'phone_agent.model.client',
         '--hidden-import', 'phone_agent.adb',
@@ -122,15 +144,22 @@ def build_exe():
         '--hidden-import', 'phone_agent.adb.device',
         '--hidden-import', 'phone_agent.adb.input',
         '--hidden-import', 'phone_agent.adb.screenshot',
+        '--hidden-import', 'phone_agent.hdc',
+        '--hidden-import', 'phone_agent.hdc.connection',
+        '--hidden-import', 'phone_agent.hdc.device',
+        '--hidden-import', 'phone_agent.hdc.input',
+        '--hidden-import', 'phone_agent.hdc.screenshot',
         '--hidden-import', 'phone_agent.actions',
         '--hidden-import', 'phone_agent.actions.handler',
         '--hidden-import', 'phone_agent.config',
         '--hidden-import', 'phone_agent.config.apps',
+        '--hidden-import', 'phone_agent.config.apps_harmonyos',
         '--hidden-import', 'phone_agent.config.i18n',
         '--hidden-import', 'phone_agent.config.prompts',
         '--hidden-import', 'phone_agent.config.prompts_zh',
         '--hidden-import', 'phone_agent.config.prompts_en',
-        'run_gui.py'
+        '--hidden-import', 'phone_agent.config.timing',
+        'gui.py'
     ]
     
     print("📦 正在打包所有依赖...")
