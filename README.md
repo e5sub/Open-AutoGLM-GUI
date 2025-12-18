@@ -24,7 +24,7 @@
 
 ### 方法1: 使用Python脚本
 ```bash
-python run_gui.py   
+python gui.py   
 ```
 
 ### 方法2: 直接运行GUI   
@@ -71,6 +71,9 @@ PhoneAgentGUI.exe
   - 网络连接失败
   - 设备未连接
   - ADB工具未安装
+  - 设备未开启USB调试
+  - 设备未安装ADB Keyboard应用
+  - 设备未开启USB调试（安全设置）
 
 ## 配置文件
 
