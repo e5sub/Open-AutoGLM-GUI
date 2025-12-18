@@ -27,7 +27,7 @@ import re
 class PhoneAgentGUI:
     def __init__(self, root):
         self.root = root
-        self.root.title("鸡哥手机助手 v0.8 - 更多好玩的工具请关注微信公众号：菜芽创作小助手")
+        self.root.title("鸡哥手机助手 v0.9 - 更多好玩的工具请关注微信公众号：菜芽创作小助手")
         self.root.geometry("1000x750")
         self.root.minsize(900, 650)
         
@@ -42,6 +42,7 @@ class PhoneAgentGUI:
         self.model = tk.StringVar(value="autoglm-phone")
         self.apikey = tk.StringVar(value="your-bigmodel-api-key")
         self.task = tk.StringVar(value="输入你想要执行的任务，例如：打开美团搜索附近的火锅店")
+        self.max_steps = tk.StringVar(value="200")
         
         self.process = None
         self.running = False
@@ -121,6 +122,7 @@ class PhoneAgentGUI:
             self.apikey.set(config.get('apikey', 'your-bigmodel-api-key'))
             task_text = config.get('task', '输入你想要执行的任务，例如：打开美团搜索附近的火锅店')
             self.task.set(task_text)
+            self.max_steps.set(str(config.get('max_steps', '200')))
             
             # 如果界面已创建，更新任务文本框
             if hasattr(self, 'task_text'):
@@ -226,6 +228,17 @@ class PhoneAgentGUI:
             self.task_text.insert("1.0", self.task.get())
             self.task_text.bind("<KeyRelease>", lambda e: self.on_task_change())
             
+            # Max Steps
+            ttk.Label(config_frame, text="🔢 最大步数:", font=('Microsoft YaHei', 9, 'bold')).grid(row=4, column=0, sticky=tk.W, pady=3)
+            max_steps_frame = ttk.Frame(config_frame)
+            max_steps_frame.grid(row=4, column=1, sticky=(tk.W, tk.E), padx=(10, 0), pady=3)
+            max_steps_frame.columnconfigure(0, weight=1)
+            
+            self.max_steps_entry = ttk.Entry(max_steps_frame, textvariable=self.max_steps, width=10, font=('Microsoft YaHei', 9))
+            self.max_steps_entry.grid(row=0, column=0, sticky=tk.W)
+            
+            ttk.Label(max_steps_frame, text="（每个任务的最大执行步数）", font=('Microsoft YaHei', 8), foreground='gray').grid(row=0, column=1, padx=(5, 0))
+            
             # Base URL变化时自动保存
             url_entry.bind("<KeyRelease>", lambda e: self.on_config_change())
             
@@ -234,6 +247,9 @@ class PhoneAgentGUI:
             
             # API Key变化时自动保存
             self.apikey_entry.bind("<KeyRelease>", lambda e: self.on_config_change())
+            
+            # Max Steps变化时自动保存
+            self.max_steps_entry.bind("<KeyRelease>", lambda e: self.on_config_change())
             
             # ADB设备区域
             adb_frame = ttk.LabelFrame(self.main_frame, text="📱 ADB设备管理", style='Card.TFrame', padding="8")
@@ -465,7 +481,7 @@ class PhoneAgentGUI:
             agent_config = AgentConfig(
                 device_id=device_id,
                 verbose=True,
-                max_steps=50  # 限制步数，避免无限循环
+                max_steps=int(self.max_steps.get() or os.getenv("PHONE_AGENT_MAX_STEPS", "200"))  # 优先使用GUI设置
             )
             
             # 创建并运行PhoneAgent
@@ -670,6 +686,7 @@ class PhoneAgentGUI:
                 'model': self.model.get(),
                 'apikey': self.apikey.get(),
                 'task': self.task_text.get("1.0", tk.END).strip(),
+                'max_steps': int(self.max_steps.get() or 200),
                 'selected_device': self.selected_device_id.get(),
                 'remote_connection': getattr(self, 'last_remote_connection', {
                     'ip': '192.168.1.100',
@@ -699,6 +716,7 @@ class PhoneAgentGUI:
                 'model': self.model.get(),
                 'apikey': self.apikey.get(),
                 'task': self.task_text.get("1.0", tk.END).strip(),
+                'max_steps': int(self.max_steps.get() or 200),
                 'selected_device': self.selected_device_id.get(),
                 'remote_connection': getattr(self, 'last_remote_connection', {
                     'ip': '192.168.1.100',
@@ -1919,6 +1937,12 @@ class PhoneAgentGUI:
 
     def on_config_change(self):
         """配置变化时自动保存（带防抖）"""
+        # 验证 max_steps 输入
+        if hasattr(self, 'max_steps_entry'):
+            max_steps_value = self.max_steps.get()
+            if max_steps_value and (not max_steps_value.isdigit() or int(max_steps_value) < 1):
+                self.max_steps.set("200")  # 重置为默认值
+        
         if not hasattr(self, '_save_timer'):
             self._save_timer = None
         
@@ -1947,6 +1971,7 @@ class PhoneAgentGUI:
                 'model': self.model.get(),
                 'apikey': self.apikey.get(),
                 'task': self.task_text.get("1.0", tk.END).strip(),
+                'max_steps': int(self.max_steps.get() or 200),
                 'selected_device': self.selected_device_id.get(),
                 'remote_connection': getattr(self, 'last_remote_connection', {
                     'ip': '192.168.1.100',
@@ -1979,6 +2004,7 @@ class PhoneAgentGUI:
                 'model': self.model.get(),
                 'apikey': self.apikey.get(),
                 'task': self.task_text.get("1.0", tk.END).strip(),
+                'max_steps': int(self.max_steps.get() or 200),
                 'selected_device': self.selected_device_id.get(),
                 'remote_connection': getattr(self, 'last_remote_connection', {
                     'ip': '192.168.1.100',
