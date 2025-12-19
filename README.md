@@ -24,7 +24,7 @@
 
 ### 方法1: 使用Python脚本
 ```bash
-python run_gui.py   
+python gui.py   
 ```
 
 ### 方法2: 直接运行GUI   
