@@ -1,3 +1,96 @@
+import subprocess
+import time
+import re
+from typing import Optional, Tuple
+
+
+def _adb_shell(cmd: str, adb: str = "adb", timeout: int = 5) -> str:
+    try:
+        p = subprocess.run([adb, 'shell', cmd], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout)
+        return p.stdout.decode(errors='ignore')
+    except Exception:
+        return ""
+
+
+def is_screen_on(adb: str = "adb") -> bool:
+    """检查设备屏幕是否点亮。返回 True 表示亮屏。
+
+    使用 `dumpsys power` 的输出进行多种模式解析，提高兼容性。
+    """
+    out = _adb_shell('dumpsys power', adb)
+    if not out:
+        return False
+
+    m = re.search(r'mWakefulness=(\w+)', out)
+    if m:
+        return m.group(1).lower() == 'awake'
+
+    m = re.search(r'mScreenOn=(true|false)', out, re.I)
+    if m:
+        return m.group(1).lower() == 'true'
+
+    m = re.search(r'Display Power: state=(\w+)', out, re.I)
+    if m:
+        return m.group(1).lower() != 'off'
+
+    # 兜底：如果包含 Awake 关键字则认为是亮屏
+    if 'awake' in out.lower():
+        return True
+
+    return False
+
+
+def wake_and_unlock(adb: str = "adb", max_attempts: int = 3, swipe: Optional[Tuple[int, int, int, int]] = None, password: Optional[str] = None) -> bool:
+    """唤醒并尝试解锁屏幕。
+
+    顺序：发送 WAKEUP -> 发送 MENU (或解锁键) -> 可选滑动解锁。
+    返回 True 表示检测到屏幕已点亮。
+    """
+    for _ in range(max_attempts):
+        subprocess.run([adb, 'shell', 'input', 'keyevent', '224'])  # KEYCODE_WAKEUP
+        time.sleep(0.4)
+        subprocess.run([adb, 'shell', 'input', 'keyevent', '82'])   # KEYCODE_MENU (通常可解锁)
+        time.sleep(0.4)
+        if swipe:
+            x1, y1, x2, y2 = swipe
+            subprocess.run([adb, 'shell', 'input', 'swipe', str(x1), str(y1), str(x2), str(y2)])
+            time.sleep(0.5)
+
+        # 如果提供了密码，尝试通过输入密码解锁（在滑动或按键后）
+        if password:
+            try:
+                # input text 对空格的处理需要替换为 %s
+                esc = str(password).replace(' ', '%s')
+                subprocess.run([adb, 'shell', 'input', 'text', esc])
+                time.sleep(0.3)
+                # 按回车或确认键
+                subprocess.run([adb, 'shell', 'input', 'keyevent', '66'])
+                time.sleep(0.6)
+            except Exception:
+                pass
+
+        if is_screen_on(adb):
+            return True
+
+        # 备用：短按电源键（某些机型需要）
+        subprocess.run([adb, 'shell', 'input', 'keyevent', '26'])
+        time.sleep(0.6)
+
+    return is_screen_on(adb)
+
+
+def ensure_awake_and_unlocked(adb: str = "adb", swipe: Optional[Tuple[int, int, int, int]] = None, password: Optional[str] = None) -> bool:
+    """在继续执行前确保屏幕已唤醒并尽量解锁。
+
+    返回 True 表示屏幕已唤醒（或已成功解锁）。
+    """
+    try:
+        if is_screen_on(adb):
+            return True
+        return wake_and_unlock(adb, swipe=swipe, password=password)
+    except Exception:
+        return False
+
 #!/usr/bin/env python3
 """
 GUI for Phone Agent - AI-powered phone automation.
@@ -30,7 +123,7 @@ from task_simplifier import TaskSimplifierManager
 class PhoneAgentGUI:
     def __init__(self, root):
         self.root = root
-        self.root.title("鸡哥手机助手 v1.3 - 更多好玩的工具请关注微信公众号：菜芽创作小助手")
+        self.root.title("鸡哥手机助手 v1.4 - 更多好玩的工具请关注微信公众号：菜芽创作小助手")
         self.root.geometry("1200x750")
         self.root.minsize(1100, 650)
         
@@ -107,6 +200,40 @@ class PhoneAgentGUI:
             
         except Exception as e:
             print(f"异步初始化错误: {e}")
+
+    def _prepare_device_on_startup(self, adb: str = 'adb', swipe: Optional[Tuple[int, int, int, int]] = (300, 1000, 300, 300)):
+        """在后台检查设备屏幕并尝试唤醒/解锁，避免阻塞 GUI 启动。
+
+        使用已有的 `ensure_awake_and_unlocked` 函数。
+        """
+        try:
+            try:
+                self.root.after(0, lambda: self.startup_label.config(text='🔌 检查并唤醒设备...'))
+            except Exception:
+                pass
+
+            try:
+                import os
+                pwd = os.getenv('PHONE_AGENT_LOCK_PASSWORD', '')
+            except Exception:
+                pwd = ''
+            ok = ensure_awake_and_unlocked(adb=adb, swipe=swipe, password=pwd if pwd else None)
+
+            if ok:
+                msg = '✅ 设备已唤醒并尽量解锁'
+            else:
+                msg = '⚠️ 无法唤醒设备，请手动检查'
+
+            try:
+                # 如果 status_var 可用则更新，否则更新 startup_label
+                if hasattr(self, 'status_var'):
+                    self.root.after(0, lambda: self.status_var.set(msg))
+                else:
+                    self.root.after(0, lambda: self.startup_label.config(text=msg))
+            except Exception:
+                pass
+        except Exception as e:
+            print(f"设备准备失败: {e}")
     
     def load_config_async(self):
         """异步加载配置，避免阻塞启动"""
@@ -467,6 +594,10 @@ class PhoneAgentGUI:
             self.stop_button = ttk.Button(main_buttons, text="⏹️ 停止", command=self.stop_agent, state=tk.DISABLED, style='Danger.TButton')
             self.stop_button.grid(row=0, column=1, padx=5)
             
+            # 锁屏密码设置按钮（用于手动设置测试密码）
+            self.pwd_button = ttk.Button(main_buttons, text="🔒 自动唤醒/解锁", command=self.open_lock_password_dialog)
+            self.pwd_button.grid(row=0, column=2, padx=5)
+            
             # 辅助功能按钮
             aux_buttons = ttk.Frame(button_frame)
             aux_buttons.pack(side=tk.LEFT)
@@ -582,6 +713,22 @@ class PhoneAgentGUI:
             self._append_output("⚠️ 未指定设备ID，将使用默认设备\n")
 
         # 无论在开发环境还是打包环境中，都使用直接运行方式
+        # 在正式运行前自动检测并尝试唤醒/解锁屏幕（不展示按钮）
+        try:
+            import os
+            tool_name = 'adb' if self.device_type.get() == '安卓' else 'hdc'
+            self._append_output(f"🔌 正在检测并唤醒设备（使用: {tool_name}）...\n")
+            self.status_var.set("🔌 检查并唤醒设备...")
+            # 使用默认滑动解锁坐标，可根据设备分辨率调整
+            pwd = os.getenv('PHONE_AGENT_LOCK_PASSWORD', '')
+            ok = ensure_awake_and_unlocked(adb=tool_name, swipe=(300, 1000, 300, 300), password=pwd if pwd else None)
+            if ok:
+                self._append_output("✅ 设备已唤醒或已解锁\n")
+            else:
+                self._append_output("⚠️ 无法唤醒设备，继续尝试运行（请手动检查设备）\n")
+        except Exception as e:
+            self._append_output(f"唤醒检测出错: {str(e)}\n")
+
         self._run_agent_direct(base_url, model, apikey, task, selected_device)
         
     def _run_adb_silent(self, cmd, timeout=10):
@@ -958,6 +1105,105 @@ class PhoneAgentGUI:
                 
         except Exception:
             pass  # 静默忽略错误
+
+    def open_lock_password_dialog(self):
+        """弹出对话框用于设置自动唤醒/解锁密码（用于运行时自动尝试解锁设备）。"""
+        try:
+            dialog = tk.Toplevel(self.root)
+            dialog.title("设置自动唤醒/解锁密码")
+            dialog.transient(self.root)
+            dialog.grab_set()
+
+            # 使弹窗背景与主窗口一致，并优化说明文案
+            try:
+                main_bg = self.root.cget('bg')
+            except Exception:
+                main_bg = '#f5f7fa'
+
+            try:
+                dialog.configure(bg=main_bg)
+            except Exception:
+                pass
+
+            desc = ("说明：此密码将在点击“运行”时被程序读取，用于自动唤醒并输入解锁密码。"
+                    " 若不希望保存到配置文件，可留空并点击“保存”。")
+            tk.Label(dialog, text=desc, bg=main_bg, fg='#333333', wraplength=420, justify=tk.LEFT,
+                     font=('Microsoft YaHei', 9)).grid(row=0, column=0, columnspan=2, padx=12, pady=(12, 6))
+
+            # 使用 tk 原生控件以保证背景色一致
+            pwd_var = tk.StringVar(value='')
+            tk.Label(dialog, text="自动唤醒/解锁密码:", bg=main_bg, fg='#222222', font=('Microsoft YaHei', 10)).grid(row=1, column=0, padx=8, pady=6, sticky=tk.E)
+            pwd_entry = tk.Entry(dialog, textvariable=pwd_var, show='*', width=30, bg='white', fg='#000000', relief=tk.SUNKEN)
+            pwd_entry.grid(row=1, column=1, padx=8, pady=6, sticky=tk.W)
+
+            show_var = tk.BooleanVar(value=False)
+            def toggle_show():
+                pwd_entry.config(show='' if show_var.get() else '*')
+            tk.Checkbutton(dialog, text='显示密码', variable=show_var, command=toggle_show, bg=main_bg).grid(row=2, column=1, sticky=tk.W, padx=8)
+
+            btn_frame = tk.Frame(dialog, bg=main_bg)
+            btn_frame.grid(row=3, column=0, columnspan=2, pady=(8, 12))
+
+            def on_save():
+                pwd = pwd_var.get().strip()
+                self.save_lock_password(pwd)
+                try:
+                    dialog.destroy()
+                except Exception:
+                    pass
+
+            tk.Button(btn_frame, text='保存并应用', command=on_save, bg='#2E86AB', fg='white').pack(side=tk.LEFT, padx=6)
+            tk.Button(btn_frame, text='取消', command=dialog.destroy).pack(side=tk.LEFT, padx=6)
+
+            # 居中显示
+            try:
+                self.center_window(dialog, width=480, height=180)
+            except Exception:
+                pass
+
+        except Exception as e:
+            self._append_output(f"打开密码设置对话框失败: {str(e)}\n")
+
+    def save_lock_password(self, password: str):
+        """保存锁屏密码到环境变量并写入配置文件（便于下次自动加载）。"""
+        try:
+            import os, json
+            # 设置环境变量（仅当前进程），PhoneAgent 启动时会读取此环境变量
+            if password:
+                os.environ['PHONE_AGENT_LOCK_PASSWORD'] = password
+            elif 'PHONE_AGENT_LOCK_PASSWORD' in os.environ:
+                del os.environ['PHONE_AGENT_LOCK_PASSWORD']
+
+            # 写入到配置文件以持久化（如果存在其它配置字段则保留）
+            config = {}
+            try:
+                if os.path.exists(self.config_file):
+                    with open(self.config_file, 'r', encoding='utf-8') as f:
+                        config = json.load(f)
+            except Exception:
+                config = {}
+
+            if password:
+                config['lock_password'] = password
+            else:
+                config.pop('lock_password', None)
+
+            try:
+                with open(self.config_file, 'w', encoding='utf-8') as f:
+                    json.dump(config, f, ensure_ascii=False, indent=2)
+            except Exception:
+                pass
+
+            # 更新界面状态和输出（说明用途）
+            if password:
+                self._append_output('🔒 自动唤醒/解锁密码已保存 — 程序将在运行时使用此密码尝试解锁设备。\n')
+                self.status_var.set('✅ 自动唤醒/解锁密码已设置')
+            else:
+                self._append_output('🔓 自动唤醒/解锁密码已移除\n')
+                self.status_var.set('✅ 自动唤醒/解锁密码已移除')
+
+        except Exception as e:
+            self._append_output(f"保存锁屏密码失败: {str(e)}\n")
             
     def load_config(self):
         """从文件加载配置"""
@@ -3634,13 +3880,28 @@ class PhoneAgentGUI:
     def add_task_to_history(self, task):
         """添加任务到历史记录"""
         try:
+            # 规范化任务文本，去除多余空白
+            normalized = ' '.join(task.split()) if isinstance(task, str) else str(task)
+            if not normalized:
+                return
+
+            # 如果历史不为空，检查最近一条是否与当前相同（避免重复添加）
+            if self.task_history:
+                try:
+                    last_task = self.task_history[0].get('task', '')
+                    last_norm = ' '.join(last_task.split()) if isinstance(last_task, str) else str(last_task)
+                    if last_norm == normalized:
+                        return
+                except Exception:
+                    pass
+
             current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             task_record = {
-                'task': task,
+                'task': normalized,
                 'timestamp': current_time,
                 'id': len(self.task_history) + 1
             }
-            
+
             # 添加到历史记录开头
             self.task_history.insert(0, task_record)
             
@@ -3745,6 +4006,10 @@ class PhoneAgentGUI:
         # 清空全部按钮
         ttk.Button(buttons_container, text="🆕 清空全部", 
                   command=lambda: self.clear_all_tasks(history_window, tree)).pack(side=tk.LEFT, padx=10)
+        
+        # 删除重复项按钮（保留第一次出现的记录）
+        ttk.Button(buttons_container, text="⚡ 删除重复项", 
+              command=lambda: self.remove_duplicate_tasks(history_window, tree)).pack(side=tk.LEFT, padx=10)
     
     def use_task_from_history(self, history_window, tree):
         """从历史记录中使用任务"""
@@ -3801,6 +4066,47 @@ class PhoneAgentGUI:
                 tree.delete(item)
             
             self.status_var.set(f"✅ 已删除 {count} 条任务记录")
+
+    def remove_duplicate_tasks(self, history_window, tree):
+        """移除任务历史中的重复项，保留每个任务的第一条记录。"""
+        if not self.task_history:
+            messagebox.showinfo("提示", "历史记录为空，无重复项可删")
+            return
+
+        # 使用规范化文本作为判重依据
+        seen = set()
+        new_history = []
+        removed = 0
+        for record in self.task_history:
+            task_text = record.get('task', '')
+            norm = ' '.join(task_text.split()) if isinstance(task_text, str) else str(task_text)
+            if norm in seen:
+                removed += 1
+                continue
+            seen.add(norm)
+            # 先加入保留列表
+            new_history.append(record)
+
+        if removed == 0:
+            messagebox.showinfo("提示", "未发现重复记录")
+            return
+
+        # 重新分配ID并保存
+        for idx, rec in enumerate(new_history, start=1):
+            rec['id'] = idx
+
+        self.task_history = new_history
+        self.save_task_history()
+
+        # 刷新树视图
+        for item in tree.get_children():
+            tree.delete(item)
+        for record in self.task_history:
+            task_content = record.get('task', '')
+            display_task = task_content if len(task_content) <= 100 else task_content[:97] + '...'
+            tree.insert('', 'end', values=(record.get('id', ''), record.get('timestamp', ''), display_task))
+
+        self.status_var.set(f"✅ 已删除 {removed} 条重复记录")
     
 
     def clear_all_tasks(self, history_window, tree):
