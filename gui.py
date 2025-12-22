@@ -294,6 +294,24 @@ class PhoneAgentGUI:
             if hasattr(self, 'adb_frame'):
                 self.on_device_type_change()
             
+            # 加载远程连接配置
+            self.last_remote_connection = config.get('remote_connection', {
+                'ip': '192.168.1.100',
+                'port': '5555'
+            })
+            
+            # 加载无线调试配对配置
+            self.last_wireless_pair = config.get('wireless_pair', {
+                'pair_address': '10.10.10.100:41717',
+                'connect_address': '10.10.10.100:5555'
+            })
+            
+            # 加载Android 10及以下无线调试配置
+            self.last_legacy_wireless = config.get('legacy_wireless', {
+                'ip': '192.168.1.100',
+                'port': '5555'
+            })
+            
             # 加载锁屏密码配置
             lock_password = config.get('lock_password', '')
             if lock_password:
@@ -380,8 +398,18 @@ class PhoneAgentGUI:
         # 配置颜色
         style.configure('Title.TLabel', font=('Microsoft YaHei', 18, 'bold'), foreground='#2E86AB')
         style.configure('Header.TLabel', font=('Microsoft YaHei', 12, 'bold'), foreground='#333333')
-        style.configure('Success.TButton', font=('Microsoft YaHei', 10, 'bold'))
-        style.configure('Danger.TButton', font=('Microsoft YaHei', 10, 'bold'))
+        style.configure('Success.TButton', font=('Microsoft YaHei', 10, 'bold'), 
+                       foreground='white', background='#28a745')
+        style.map('Success.TButton', 
+                 background=[('active', '#218838'), ('pressed', '#1e7e34')])
+        style.configure('Danger.TButton', font=('Microsoft YaHei', 10, 'bold'), 
+                       foreground='white', background='#dc3545')
+        style.map('Danger.TButton', 
+                 background=[('active', '#c82333'), ('pressed', '#bd2130')])
+        style.configure('Secondary.TButton', font=('Microsoft YaHei', 10, 'bold'), 
+                       foreground='#333333', background='#6c757d')
+        style.map('Secondary.TButton', 
+                 background=[('active', '#5a6268'), ('pressed', '#545b62')])
         
         # 配置框架
         style.configure('Card.TFrame', relief='raised', borderwidth=1)
@@ -1067,6 +1095,10 @@ class PhoneAgentGUI:
                 'wireless_pair': getattr(self, 'last_wireless_pair', {
                     'pair_address': '10.10.10.100:41717',
                     'connect_address': '10.10.10.100:5555'
+                }),
+                'legacy_wireless': getattr(self, 'last_legacy_wireless', {
+                    'ip': '192.168.1.100',
+                    'port': '5555'
                 })
             }
             
@@ -1107,6 +1139,10 @@ class PhoneAgentGUI:
                 'wireless_pair': getattr(self, 'last_wireless_pair', {
                     'pair_address': '10.10.10.100:41717',
                     'connect_address': '10.10.10.100:5555'
+                }),
+                'legacy_wireless': getattr(self, 'last_legacy_wireless', {
+                    'ip': '192.168.1.100',
+                    'port': '5555'
                 })
             }
             
@@ -1251,6 +1287,12 @@ class PhoneAgentGUI:
             self.last_wireless_pair = config.get('wireless_pair', {
                 'pair_address': '10.10.10.100:41717',
                 'connect_address': '10.10.10.100:5555'
+            })
+            
+            # 加载Android 10及以下无线调试配置
+            self.last_legacy_wireless = config.get('legacy_wireless', {
+                'ip': '192.168.1.100',
+                'port': '5555'
             })
             
             # 加载锁屏密码配置
@@ -1794,25 +1836,7 @@ class PhoneAgentGUI:
             button_frame.grid(row=2, column=0, sticky=(tk.W, tk.E), pady=(0, 15))
             button_frame.columnconfigure(0, weight=1)
             
-            def do_connect_usb():
-                """USB连接引导"""
-                if usb_devices:
-                    self._append_output("💡 USB连接提示：\n")
-                    if device_type_en == "hdc":
-                        self._append_output("   1. 确保HDC调试已开启\n")
-                        self._append_output("   2. 检查USB连接线\n")
-                        self._append_output("   3. 重新授权HDC设备\n")
-                    else:
-                        self._append_output("   1. 确保USB调试已开启\n")
-                        self._append_output("   2. 检查USB连接线\n")
-                        self._append_output("   3. 重新授权设备\n")
-                else:
-                    if device_type_en == "hdc":
-                        self._append_output("📱 请使用USB线连接鸿蒙设备并开启HDC调试\n")
-                    else:
-                        self._append_output("📱 请使用USB线连接Android设备并开启USB调试\n")
-                self._on_adb_connection_window_close(dialog)
-                
+
             def do_connect_remote():
                 """远程连接"""
                 self._on_adb_connection_window_close(dialog)
@@ -1825,14 +1849,13 @@ class PhoneAgentGUI:
                 """无线调试配对连接（仅ADB）"""
                 self._on_adb_connection_window_close(dialog)
                 self.connect_wireless_pair_device()
-                
-            def do_refresh_devices():
-                """刷新设备"""
-                self._append_output("🔄 正在重新扫描设备...\n")
-                self.refresh_devices()
-                dialog.after(1000, lambda: self.connect_adb_device())
-                self._on_adb_connection_window_close(dialog)
             
+            def do_connect_legacy_wireless():
+                """传统无线调试连接（Android 10以下）"""
+                self._on_adb_connection_window_close(dialog)
+                self.connect_legacy_wireless_device()
+                
+
             def do_restart_service():
                 """重启ADB或HDC服务"""
                 try:
@@ -1999,16 +2022,16 @@ class PhoneAgentGUI:
             row1_buttons = ttk.Frame(buttons_row1)
             row1_buttons.pack(anchor=tk.W)
             
-            if not usb_devices:
-                ttk.Button(row1_buttons, text="📱 USB连接帮助", 
-                          command=do_connect_usb, style='Success.TButton').pack(side=tk.LEFT, padx=(0, 8))
+
                       
             if device_type_en == "hdc":
                 ttk.Button(row1_buttons, text="🌐 远程HDC连接", 
                           command=do_connect_remote, style='Success.TButton').pack(side=tk.LEFT, padx=(0, 8))
             else:
-                ttk.Button(row1_buttons, text="🔗 无线调试配对", 
+                ttk.Button(row1_buttons, text="🔗 Android 11+ 无线配对", 
                           command=do_connect_wireless_pair, style='Success.TButton').pack(side=tk.LEFT, padx=(0, 8))
+                ttk.Button(row1_buttons, text="📡 Android 10- 无线配对", 
+                          command=do_connect_legacy_wireless, style='Success.TButton').pack(side=tk.LEFT, padx=(0, 8))
             
             # 第二行按钮
             buttons_row2 = ttk.Frame(button_frame)
@@ -2018,8 +2041,7 @@ class PhoneAgentGUI:
             row2_buttons = ttk.Frame(buttons_row2)
             row2_buttons.pack(anchor=tk.W)
             
-            ttk.Button(row2_buttons, text="🔄 重新扫描", 
-                      command=do_refresh_devices, style='Success.TButton').pack(side=tk.LEFT, padx=(0, 8))
+
             
             if offline_devices or len(self.connected_devices) == 0:
                 service_button_text = "🔧 重启HDC服务" if device_type_en == "hdc" else "🔧 重启ADB服务"
@@ -2298,8 +2320,8 @@ class PhoneAgentGUI:
     def connect_wireless_pair_device(self):
         """无线调试配对连接（Android 11+）"""
         dialog = tk.Toplevel(self.root)
-        dialog.title("无线调试配对连接")
-        dialog.geometry("450x320")
+        dialog.title("无线调试配对连接 (Android 11+)")
+        dialog.geometry("500x600")
         dialog.resizable(True, True)
         
         # 居中显示在主窗口中间
@@ -2309,14 +2331,29 @@ class PhoneAgentGUI:
         main_frame = ttk.Frame(dialog, padding="15")
         main_frame.pack(fill=tk.BOTH, expand=True)
         
-        # 简化说明
-        info_label = ttk.Label(main_frame, text="📱 Android 11+ 无线调试配对", 
+        # 标题说明
+        title_label = ttk.Label(main_frame, text="📱 Android 11+ 无线调试配对连接", 
                               font=('Microsoft YaHei', 11, 'bold'))
-        info_label.pack(pady=(0, 15))
+        title_label.pack(pady=(0, 10))
         
-        # 输入区域
-        input_frame = ttk.Frame(main_frame)
-        input_frame.pack(fill=tk.X, pady=(0, 20))
+        # 说明文字
+        info_frame = ttk.LabelFrame(main_frame, text="📋 使用说明", padding="10")
+        info_frame.pack(fill=tk.X, pady=(0, 15))
+        
+        info_text = """1. 确保Android 11+设备已开启无线调试
+2. 设备需处于与PC同一WiFi网络
+3. 在设备上获取配对码（通常是6位数字）
+4. 输入配对地址、配对码和连接地址
+5. 点击"开始配对连接"完成无线连接
+6. 此方法适用于Android 11及以上版本的无线调试配对"""
+        
+        info_label = ttk.Label(info_frame, text=info_text, 
+                              font=('Microsoft YaHei', 9), justify=tk.LEFT)
+        info_label.pack(anchor=tk.W)
+        
+        # 连接配置区域
+        config_frame = ttk.LabelFrame(main_frame, text="🔧 连接配置", padding="10")
+        config_frame.pack(fill=tk.X, pady=(0, 15))
         
         # 使用上次配对的配置
         last_pair = getattr(self, 'last_wireless_pair', {})
@@ -2324,24 +2361,24 @@ class PhoneAgentGUI:
         default_connect_address = last_pair.get('connect_address', '10.10.10.100:5555')
         
         # 配对IP和端口
-        ttk.Label(input_frame, text="🌐 配对地址 (IP:端口):", font=('Microsoft YaHei', 10)).grid(row=0, column=0, sticky=tk.W, pady=8)
+        ttk.Label(config_frame, text="🌐 配对地址 (IP:端口):", font=('Microsoft YaHei', 9, 'bold')).grid(row=0, column=0, sticky=tk.W, pady=8)
         pair_address_var = tk.StringVar(value=default_pair_address)
-        pair_address_entry = ttk.Entry(input_frame, textvariable=pair_address_var, width=30, font=('Microsoft YaHei', 10))
+        pair_address_entry = ttk.Entry(config_frame, textvariable=pair_address_var, width=30, font=('Microsoft YaHei', 10))
         pair_address_entry.grid(row=0, column=1, sticky=(tk.W, tk.E), padx=(10, 0), pady=8)
         
         # 配对码
-        ttk.Label(input_frame, text="🔑 配对码 (6位数字):", font=('Microsoft YaHei', 10)).grid(row=1, column=0, sticky=tk.W, pady=8)
+        ttk.Label(config_frame, text="🔑 配对码 (6位数字):", font=('Microsoft YaHei', 9, 'bold')).grid(row=1, column=0, sticky=tk.W, pady=8)
         pair_code_var = tk.StringVar()
-        pair_code_entry = ttk.Entry(input_frame, textvariable=pair_code_var, width=15, font=('Microsoft YaHei', 12))
+        pair_code_entry = ttk.Entry(config_frame, textvariable=pair_code_var, width=15, font=('Microsoft YaHei', 12))
         pair_code_entry.grid(row=1, column=1, sticky=tk.W, padx=(10, 0), pady=8)
         
         # 连接地址
-        ttk.Label(input_frame, text="📡 连接地址 (IP:端口):", font=('Microsoft YaHei', 10)).grid(row=2, column=0, sticky=tk.W, pady=8)
+        ttk.Label(config_frame, text="📡 连接地址 (IP:端口):", font=('Microsoft YaHei', 9, 'bold')).grid(row=2, column=0, sticky=tk.W, pady=8)
         connect_address_var = tk.StringVar(value=default_connect_address)
-        connect_address_entry = ttk.Entry(input_frame, textvariable=connect_address_var, width=30, font=('Microsoft YaHei', 10))
+        connect_address_entry = ttk.Entry(config_frame, textvariable=connect_address_var, width=30, font=('Microsoft YaHei', 10))
         connect_address_entry.grid(row=2, column=1, sticky=(tk.W, tk.E), padx=(10, 0), pady=8)
         
-        input_frame.columnconfigure(1, weight=1)
+        config_frame.columnconfigure(1, weight=1)
         
         def do_pair_connect():
             """执行配对和连接"""
@@ -2399,7 +2436,7 @@ class PhoneAgentGUI:
                         
                         self.refresh_devices()
                         dialog.destroy()
-                        messagebox.showinfo("成功", "无线调试配对连接成功！")
+                        messagebox.showinfo("连接成功", f"✅ 无线调试配对连接成功！\n\n📱 设备地址: {connect_address}")
                     else:
                         error_msg = connect_result.stderr.strip() if connect_result.stderr else f"连接失败，返回码: {connect_result.returncode}"
                         self._append_output(f"❌ 连接失败: {error_msg}\n")
@@ -2413,9 +2450,13 @@ class PhoneAgentGUI:
                 self._append_output(f"❌ 操作异常: {str(e)}\n")
                 messagebox.showerror("异常错误", str(e))
         
-        # 按钮区域 - 确保在底部可见
-        button_frame = ttk.Frame(dialog)
-        button_frame.pack(side=tk.BOTTOM, fill=tk.X, padx=15, pady=15)
+        # 按钮区域 - 确保在主框架底部可见
+        button_container = ttk.Frame(main_frame)
+        button_container.pack(side=tk.BOTTOM, fill=tk.X, pady=(10, 0))
+        
+        # 创建居中容器
+        button_frame = ttk.Frame(button_container)
+        button_frame.pack()
         
         # 创建按钮
         ttk.Button(button_frame, text="🔑 开始配对连接", command=do_pair_connect, 
@@ -2730,8 +2771,8 @@ class PhoneAgentGUI:
     def connect_wireless_pair_device(self):
         """无线调试配对连接（Android 11+）"""
         dialog = tk.Toplevel(self.root)
-        dialog.title("无线调试配对连接")
-        dialog.geometry("450x320")
+        dialog.title("无线调试配对连接 (Android 11+)")
+        dialog.geometry("500x600")
         dialog.resizable(True, True)
         
         # 居中显示在主窗口中间
@@ -2741,14 +2782,29 @@ class PhoneAgentGUI:
         main_frame = ttk.Frame(dialog, padding="15")
         main_frame.pack(fill=tk.BOTH, expand=True)
         
-        # 简化说明
-        info_label = ttk.Label(main_frame, text="📱 Android 11+ 无线调试配对", 
+        # 标题说明
+        title_label = ttk.Label(main_frame, text="📱 Android 11+ 无线调试配对连接", 
                               font=('Microsoft YaHei', 11, 'bold'))
-        info_label.pack(pady=(0, 15))
+        title_label.pack(pady=(0, 10))
         
-        # 输入区域
-        input_frame = ttk.Frame(main_frame)
-        input_frame.pack(fill=tk.X, pady=(0, 20))
+        # 说明文字
+        info_frame = ttk.LabelFrame(main_frame, text="📋 使用说明", padding="10")
+        info_frame.pack(fill=tk.X, pady=(0, 15))
+        
+        info_text = """1. 确保Android 11+设备已开启无线调试
+2. 设备需处于与PC同一WiFi网络
+3. 在设备上获取配对码（通常是6位数字）
+4. 输入配对地址、配对码和连接地址
+5. 点击"开始配对连接"完成无线连接
+6. 此方法适用于Android 11及以上版本的无线调试配对"""
+        
+        info_label = ttk.Label(info_frame, text=info_text, 
+                              font=('Microsoft YaHei', 9), justify=tk.LEFT)
+        info_label.pack(anchor=tk.W)
+        
+        # 连接配置区域
+        config_frame = ttk.LabelFrame(main_frame, text="🔧 连接配置", padding="10")
+        config_frame.pack(fill=tk.X, pady=(0, 15))
         
         # 使用上次配对的配置
         last_pair = getattr(self, 'last_wireless_pair', {})
@@ -2756,24 +2812,24 @@ class PhoneAgentGUI:
         default_connect_address = last_pair.get('connect_address', '10.10.10.100:5555')
         
         # 配对IP和端口
-        ttk.Label(input_frame, text="🌐 配对地址 (IP:端口):", font=('Microsoft YaHei', 10)).grid(row=0, column=0, sticky=tk.W, pady=8)
+        ttk.Label(config_frame, text="🌐 配对地址 (IP:端口):", font=('Microsoft YaHei', 9, 'bold')).grid(row=0, column=0, sticky=tk.W, pady=8)
         pair_address_var = tk.StringVar(value=default_pair_address)
-        pair_address_entry = ttk.Entry(input_frame, textvariable=pair_address_var, width=30, font=('Microsoft YaHei', 10))
+        pair_address_entry = ttk.Entry(config_frame, textvariable=pair_address_var, width=30, font=('Microsoft YaHei', 10))
         pair_address_entry.grid(row=0, column=1, sticky=(tk.W, tk.E), padx=(10, 0), pady=8)
         
         # 配对码
-        ttk.Label(input_frame, text="🔑 配对码 (6位数字):", font=('Microsoft YaHei', 10)).grid(row=1, column=0, sticky=tk.W, pady=8)
+        ttk.Label(config_frame, text="🔑 配对码 (6位数字):", font=('Microsoft YaHei', 9, 'bold')).grid(row=1, column=0, sticky=tk.W, pady=8)
         pair_code_var = tk.StringVar()
-        pair_code_entry = ttk.Entry(input_frame, textvariable=pair_code_var, width=15, font=('Microsoft YaHei', 12))
+        pair_code_entry = ttk.Entry(config_frame, textvariable=pair_code_var, width=15, font=('Microsoft YaHei', 12))
         pair_code_entry.grid(row=1, column=1, sticky=tk.W, padx=(10, 0), pady=8)
         
         # 连接地址
-        ttk.Label(input_frame, text="📡 连接地址 (IP:端口):", font=('Microsoft YaHei', 10)).grid(row=2, column=0, sticky=tk.W, pady=8)
+        ttk.Label(config_frame, text="📡 连接地址 (IP:端口):", font=('Microsoft YaHei', 9, 'bold')).grid(row=2, column=0, sticky=tk.W, pady=8)
         connect_address_var = tk.StringVar(value=default_connect_address)
-        connect_address_entry = ttk.Entry(input_frame, textvariable=connect_address_var, width=30, font=('Microsoft YaHei', 10))
+        connect_address_entry = ttk.Entry(config_frame, textvariable=connect_address_var, width=30, font=('Microsoft YaHei', 10))
         connect_address_entry.grid(row=2, column=1, sticky=(tk.W, tk.E), padx=(10, 0), pady=8)
         
-        input_frame.columnconfigure(1, weight=1)
+        config_frame.columnconfigure(1, weight=1)
         
         def do_pair_connect():
             """执行配对和连接"""
@@ -2831,7 +2887,7 @@ class PhoneAgentGUI:
                         
                         self.refresh_devices()
                         dialog.destroy()
-                        messagebox.showinfo("成功", "无线调试配对连接成功！")
+                        messagebox.showinfo("连接成功", f"✅ 无线调试配对连接成功！\n\n📱 设备地址: {connect_address}")
                     else:
                         error_msg = connect_result.stderr.strip() if connect_result.stderr else f"连接失败，返回码: {connect_result.returncode}"
                         self._append_output(f"❌ 连接失败: {error_msg}\n")
@@ -2845,9 +2901,13 @@ class PhoneAgentGUI:
                 self._append_output(f"❌ 操作异常: {str(e)}\n")
                 messagebox.showerror("异常错误", str(e))
         
-        # 按钮区域 - 确保在底部可见
-        button_frame = ttk.Frame(dialog)
-        button_frame.pack(side=tk.BOTTOM, fill=tk.X, padx=15, pady=15)
+        # 按钮区域 - 确保在主框架底部可见
+        button_container = ttk.Frame(main_frame)
+        button_container.pack(side=tk.BOTTOM, fill=tk.X, pady=(10, 0))
+        
+        # 创建居中容器
+        button_frame = ttk.Frame(button_container)
+        button_frame.pack()
         
         # 创建按钮
         ttk.Button(button_frame, text="🔑 开始配对连接", command=do_pair_connect, 
@@ -2857,6 +2917,168 @@ class PhoneAgentGUI:
         
         # 设置焦点到配对码输入框
         pair_code_entry.focus()
+
+    def connect_legacy_wireless_device(self):
+        """无线调试配置连接（Android 10及以下）"""
+        dialog = tk.Toplevel(self.root)
+        dialog.title("无线调试配置连接 (Android 10及以下)")
+        dialog.geometry("500x550")
+        dialog.resizable(True, True)
+        
+        # 居中显示在主窗口中间
+        self.center_window(dialog)
+        
+        # 主框架
+        main_frame = ttk.Frame(dialog, padding="15")
+        main_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # 标题说明
+        title_label = ttk.Label(main_frame, text="📱 Android 10及以下 无线调试配置连接", 
+                              font=('Microsoft YaHei', 11, 'bold'))
+        title_label.pack(pady=(0, 10))
+        
+        # 说明文字
+        info_frame = ttk.LabelFrame(main_frame, text="📋 使用说明", padding="10")
+        info_frame.pack(fill=tk.X, pady=(0, 15))
+        
+        info_text = """1. 确保Android设备已开启USB调试
+2. 设备需处于与PC同一WiFi网络
+3. 输入设备的IP地址和端口号
+4. 点击"开始配对连接"即可完成连接
+5. 此方法适用于Android 10及以下版本
+6. 首次使用可能需要先用USB连接执行adb tcpip 5555"""
+        
+        info_label = ttk.Label(info_frame, text=info_text, 
+                              font=('Microsoft YaHei', 9), justify=tk.LEFT)
+        info_label.pack(anchor=tk.W)
+        
+        # 连接配置区域
+        config_frame = ttk.LabelFrame(main_frame, text="🔧 连接配置", padding="10")
+        config_frame.pack(fill=tk.X, pady=(0, 15))
+        
+        # 使用上次连接的配置
+        last_remote = getattr(self, 'last_legacy_wireless', {})
+        default_ip = last_remote.get('ip', '192.168.1.100')
+        default_port = last_remote.get('port', '5555')
+        
+        # IP地址和端口输入
+        ttk.Label(config_frame, text="🌐 设备IP地址:", font=('Microsoft YaHei', 9, 'bold')).grid(row=0, column=0, sticky=tk.W, pady=8)
+        ip_var = tk.StringVar(value=default_ip)
+        ip_entry = ttk.Entry(config_frame, textvariable=ip_var, width=25, font=('Microsoft YaHei', 10))
+        ip_entry.grid(row=0, column=1, sticky=(tk.W, tk.E), padx=(10, 0), pady=8)
+        config_frame.columnconfigure(1, weight=1)
+        
+        ttk.Label(config_frame, text="🔌 端口号:", font=('Microsoft YaHei', 9, 'bold')).grid(row=1, column=0, sticky=tk.W, pady=8)
+        port_var = tk.StringVar(value=default_port)
+        port_entry = ttk.Entry(config_frame, textvariable=port_var, width=10, font=('Microsoft YaHei', 10))
+        port_entry.grid(row=1, column=1, sticky=tk.W, padx=(10, 0), pady=8)
+        
+        def do_wireless_connect():
+            """执行无线调试配置连接"""
+            ip_address = ip_var.get().strip()
+            port = port_var.get().strip()
+            
+            if not ip_address:
+                messagebox.showwarning("输入错误", "请输入设备IP地址")
+                return
+            if not port:
+                port = '5555'
+                port_var.set(port)
+            
+            remote_address = f"{ip_address}:{port}"
+            self._append_output(f"🔑 正在开始配对连接 {remote_address}...\\n")
+            
+            try:
+                # 尝试ping一下看是否能连通
+                import platform
+                if platform.system().lower() == 'windows':
+                    ping_cmd = ['ping', '-n', '1', '-w', '2000', ip_address]
+                else:
+                    ping_cmd = ['ping', '-c', '1', '-W', '2', ip_address]
+                
+                ping_result = subprocess.run(ping_cmd, capture_output=True, text=True, timeout=5)
+                
+                if ping_result.returncode != 0:
+                    self._append_output(f"⚠️ 无法ping通 {ip_address}，但仍尝试连接ADB...\\n")
+                else:
+                    self._append_output(f"✅ 网络连通: {ip_address}\\n")
+                
+                # 直接连接ADB设备
+                connect_result = subprocess.run(['adb', 'connect', remote_address],
+                                              capture_output=True, text=True, timeout=15)
+                
+                if connect_result.returncode == 0 or "connected" in connect_result.stdout.lower():
+                    self._append_output(f"✅ 连接成功: {connect_result.stdout.strip() if connect_result.stdout else ''}\\n")
+                    
+                    # 保存成功的连接信息
+                    self.last_legacy_wireless = {
+                        'ip': ip_address,
+                        'port': port
+                    }
+                    # 同时更新远程连接配置
+                    self.last_remote_connection = {
+                        'ip': ip_address,
+                        'port': port
+                    }
+                    
+                    # 自动保存配置
+                    try:
+                        self.save_config_silent()
+                    except:
+                        pass  # 忽略保存错误，不影响连接成功
+                    
+                    self.refresh_devices()
+                    dialog.destroy()
+                    messagebox.showinfo("成功", f"✅ 配对连接成功！\n\n📱 设备地址: {remote_address}")
+                else:
+                    error_msg = connect_result.stderr.strip() if connect_result.stderr else connect_result.stdout.strip() or f"连接失败，返回码: {connect_result.returncode}"
+                    self._append_output(f"❌ 连接失败: {error_msg}\\n")
+                    messagebox.showerror("连接失败", f"无法连接到设备 {remote_address}\\n\\n请确保：\\n1. 设备已开启USB调试\\n2. 设备与PC在同一网络\\n3. 设备已启用网络ADB（可能需要先USB连接执行adb tcpip 5555）")
+                    
+            except subprocess.TimeoutExpired:
+                self._append_output("❌ 连接超时\\n")
+                messagebox.showerror("超时", "连接设备超时")
+            except Exception as e:
+                self._append_output(f"❌ 连接异常: {str(e)}\\n")
+                messagebox.showerror("异常", f"连接异常: {str(e)}")
+        
+        def show_help():
+            """显示帮助信息"""
+            help_text = """如果连接失败，请尝试以下步骤：
+
+1. 首次使用时，可能需要先用USB连接设备：
+   - USB连接设备并开启USB调试
+   - 执行命令：adb tcpip 5555
+   - 断开USB，然后使用此功能连接
+
+2. 确保设备防火墙允许ADB端口
+
+3. 检查设备IP地址是否正确：
+   - 在设备设置中查看WiFi详情获取IP
+   - 或在设备终端执行：ip addr show wlan0
+
+4. 确保PC和设备在同一网段"""
+            
+            messagebox.showinfo("帮助", help_text)
+        
+        # 按钮区域 - 确保在主框架底部可见
+        button_container = ttk.Frame(main_frame)
+        button_container.pack(side=tk.BOTTOM, fill=tk.X, pady=(10, 0))
+        
+        # 创建居中容器
+        button_frame = ttk.Frame(button_container)
+        button_frame.pack()
+        
+        # 创建按钮
+        ttk.Button(button_frame, text="🔑 开始配对连接", command=do_wireless_connect, 
+                  style='Success.TButton', width=18).pack(side=tk.LEFT, padx=(0, 10))
+        ttk.Button(button_frame, text="❓ 帮助", command=show_help, 
+                  width=10).pack(side=tk.LEFT, padx=(0, 10))
+        ttk.Button(button_frame, text="❌ 关闭", command=dialog.destroy, 
+                  style='Danger.TButton', width=10).pack(side=tk.LEFT)
+        
+        # 设置焦点到IP地址输入框
+        ip_entry.focus()
 
     def connect_hdc_remote_device(self):
         """远程连接HDC设备"""
@@ -3635,6 +3857,10 @@ class PhoneAgentGUI:
                 'wireless_pair': getattr(self, 'last_wireless_pair', {
                     'pair_address': '10.10.10.100:41717',
                     'connect_address': '10.10.10.100:5555'
+                }),
+                'legacy_wireless': getattr(self, 'last_legacy_wireless', {
+                    'ip': '192.168.1.100',
+                    'port': '5555'
                 })
             }
             
@@ -3840,6 +4066,10 @@ class PhoneAgentGUI:
                 'wireless_pair': getattr(self, 'last_wireless_pair', {
                     'pair_address': '10.10.10.100:41717',
                     'connect_address': '10.10.10.100:5555'
+                }),
+                'legacy_wireless': getattr(self, 'last_legacy_wireless', {
+                    'ip': '192.168.1.100',
+                    'port': '5555'
                 })
             }
             
@@ -3980,19 +4210,17 @@ class PhoneAgentGUI:
         table_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
         
         # 创建Treeview显示历史记录，启用多选
-        columns = ('ID', '时间', '任务')
+        columns = ('时间', '任务')
         tree = ttk.Treeview(table_frame, columns=columns, show='tree headings', height=12, selectmode='extended')
         
         # 设置列标题和宽度
         tree.heading('#0', text='')
-        tree.heading('ID', text='ID')
         tree.heading('时间', text='执行时间')
         tree.heading('任务', text='任务内容')
         
         tree.column('#0', width=0, stretch='NO')  # 隐藏树形列
-        tree.column('ID', width=50, anchor='center')
         tree.column('时间', width=150, anchor='center')
-        tree.column('任务', width=600, anchor='w')
+        tree.column('任务', width=650, anchor='w')
         
         # 添加滚动条
         scrollbar = ttk.Scrollbar(table_frame, orient=tk.VERTICAL, command=tree.yview)
@@ -4010,7 +4238,6 @@ class PhoneAgentGUI:
                 display_task = display_task[:97] + "..."
             
             tree.insert('', 'end', values=(
-                record.get('id', ''),
                 record.get('timestamp', ''),
                 display_task
             ))
@@ -4059,10 +4286,11 @@ class PhoneAgentGUI:
         item = selected_item[0]
         values = tree.item(item, 'values')
         
-        # 根据ID查找对应的完整任务记录
-        task_id = int(values[0])
+        # 根据时间和任务内容查找对应的完整任务记录
+        timestamp = values[0]
+        task_display = values[1]
         for record in self.task_history:
-            if record.get('id') == task_id:
+            if record.get('timestamp') == timestamp and record.get('task', '').startswith(task_display.replace('...', '')):
                 # 将完整的任务内容填充到任务输入框
                 full_task = record.get('task', '')
                 self.task_text.delete("1.0", tk.END)
@@ -4089,14 +4317,19 @@ class PhoneAgentGUI:
             message = f"确定要删除选中的 {count} 条任务记录吗？"
         
         if messagebox.askyesno("确认", message):
-            # 获取要删除的任务ID
-            task_ids_to_delete = []
+            # 获取要删除的任务
+            tasks_to_delete = []
             for item in selected_items:
                 values = tree.item(item, 'values')
-                task_ids_to_delete.append(int(values[0]))
+                timestamp = values[0]
+                task_display = values[1]
+                tasks_to_delete.append((timestamp, task_display))
             
             # 从历史记录中删除
-            self.task_history = [r for r in self.task_history if r.get('id') not in task_ids_to_delete]
+            for timestamp, task_display in tasks_to_delete:
+                self.task_history = [r for r in self.task_history 
+                                   if not (r.get('timestamp') == timestamp and 
+                                          r.get('task', '').startswith(task_display.replace('...', '')))]
             self.save_task_history()
             
             # 刷新树形视图
@@ -4142,7 +4375,7 @@ class PhoneAgentGUI:
         for record in self.task_history:
             task_content = record.get('task', '')
             display_task = task_content if len(task_content) <= 100 else task_content[:97] + '...'
-            tree.insert('', 'end', values=(record.get('id', ''), record.get('timestamp', ''), display_task))
+            tree.insert('', 'end', values=(record.get('timestamp', ''), display_task))
 
         self.status_var.set(f"✅ 已删除 {removed} 条重复记录")
     
