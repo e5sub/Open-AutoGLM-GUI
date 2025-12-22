@@ -123,7 +123,7 @@ from task_simplifier import TaskSimplifierManager
 class PhoneAgentGUI:
     def __init__(self, root):
         self.root = root
-        self.root.title("鸡哥手机助手 v1.4 - 更多好玩的工具请关注微信公众号：菜芽创作小助手")
+        self.root.title("鸡哥手机助手 v1.5 - 更多好玩的工具请关注微信公众号：菜芽创作小助手")
         self.root.geometry("1200x750")
         self.root.minsize(1100, 650)
         
@@ -156,6 +156,7 @@ class PhoneAgentGUI:
         self.qrcode_window = None
         self.adb_connection_window = None
         self.device_details_window = None
+        self.remote_desktop_window = None
         
         # 设备类型防重复变量
         self._last_device_type = None
@@ -287,10 +288,17 @@ class PhoneAgentGUI:
             selected_device = self.env_device_id or config.get('selected_device', '')
             if selected_device and hasattr(self, 'selected_device_id'):
                 self.selected_device_id.set(selected_device)
+                print(f"🔍 配置加载: 设置selected_device_id为 '{selected_device}'")
             
             # 如果界面已创建，触发设备类型变化处理以更新按钮显示
             if hasattr(self, 'adb_frame'):
                 self.on_device_type_change()
+            
+            # 加载锁屏密码配置
+            lock_password = config.get('lock_password', '')
+            if lock_password:
+                import os
+                os.environ['PHONE_AGENT_LOCK_PASSWORD'] = lock_password
             
             if hasattr(self, 'status_var'):
                 self.status_var.set("✅ 配置已加载")
@@ -556,6 +564,8 @@ class PhoneAgentGUI:
             ttk.Button(self.adb_control_frame, text="🔄 刷新设备", command=self.refresh_devices).pack(side=tk.LEFT, padx=(0, 8))
             ttk.Button(self.adb_control_frame, text="🔗 连接ADB", command=self.connect_adb_device).pack(side=tk.LEFT, padx=(0, 8))
             ttk.Button(self.adb_control_frame, text="📋 设备详情", command=self.show_device_details).pack(side=tk.LEFT, padx=(0, 8))
+            self.remote_desktop_button = ttk.Button(self.adb_control_frame, text="🖥️远程桌面", command=self.open_remote_desktop)
+            self.remote_desktop_button.pack(side=tk.LEFT, padx=(0, 8))
             ttk.Button(self.adb_control_frame, text="📲 安装ADB键盘", command=self.install_adb_keyboard).pack(side=tk.LEFT, padx=(0, 8))
             ttk.Button(self.adb_control_frame, text="📱 关注公众号", command=self.open_wechat_qrcode).pack(side=tk.LEFT, padx=(0, 8))
             
@@ -1237,13 +1247,20 @@ class PhoneAgentGUI:
                     'port': '5555'
                 })
                 
-                # 加载无线调试配对配置
-                self.last_wireless_pair = config.get('wireless_pair', {
-                    'pair_address': '10.10.10.100:41717',
-                    'connect_address': '10.10.10.100:5555'
-                })
-                
-                self.status_var.set("✅ 配置已加载")
+            # 加载无线调试配对配置
+            self.last_wireless_pair = config.get('wireless_pair', {
+                'pair_address': '10.10.10.100:41717',
+                'connect_address': '10.10.10.100:5555'
+            })
+            
+            # 加载锁屏密码配置
+            lock_password = config.get('lock_password', '')
+            if lock_password:
+                import os
+                os.environ['PHONE_AGENT_LOCK_PASSWORD'] = lock_password
+                self._append_output(f"🔒 已加载锁屏密码配置\n")
+            
+            self.status_var.set("✅ 配置已加载")
                 
         except Exception as e:
             print(f"加载配置失败: {str(e)}")
@@ -1289,6 +1306,13 @@ class PhoneAgentGUI:
                     'pair_address': '10.10.10.100:41717',
                     'connect_address': '10.10.10.100:5555'
                 })
+                
+                # 加载锁屏密码配置
+                lock_password = config.get('lock_password', '')
+                if lock_password:
+                    import os
+                    os.environ['PHONE_AGENT_LOCK_PASSWORD'] = lock_password
+                    self._append_output(f"🔒 已从文件加载锁屏密码配置\n")
                 
                 messagebox.showinfo("成功", "配置已成功加载")
                 self.status_var.set("✅ 从文件加载配置")
@@ -1639,7 +1663,6 @@ class PhoneAgentGUI:
             else:
                 self.device_status_label.config(text="未检测到设备", foreground='red')
             
-        # 获取当前设备类型用于显示
         device_type = self.device_type.get()
         device_type_en = "hdc" if device_type == "鸿蒙" else "adb"
         device_text = "HDC" if device_type_en == "hdc" else "ADB"
@@ -1647,6 +1670,19 @@ class PhoneAgentGUI:
         self._append_output(f"📱 {device_text}扫描完成，发现 {len(self.connected_devices)} 台设备\n")
         if self.env_device_id:
             self._append_output(f"🔧 环境变量 PHONE_AGENT_DEVICE_ID: {self.env_device_id}\n")
+
+    def on_device_change(self):
+        """处理设备选择变化"""
+        selected_device = self.selected_device_id.get()
+        
+        # 自动保存配置
+        try:
+            self.save_config_silent()
+        except:
+            pass  # 忽略保存错误，不影响用户体验
+            
+        # 更新状态显示
+        self.device_status_label.config(text=f"已选择设备: {selected_device}", foreground='green')
         
 
 
@@ -3544,17 +3580,19 @@ class PhoneAgentGUI:
                 for widget, text, is_visible in buttons_info:
                     if device_type_en == "hdc":
                         self.adb_frame.config(text="📱 HDC设备管理")
-                        # HDC模式：修改连接按钮，隐藏ADB键盘按钮
+                        # HDC模式：修改连接按钮，隐藏ADB键盘按钮和远程桌面按钮
                         if "连接ADB" in text:
                             widget.config(text="🔗 连接HDC")
-                        elif "安装ADB键盘" in text and is_visible:
+                        elif ("安装ADB键盘" in text or "远程桌面" in text) and is_visible:
                             widget.pack_forget()
                     else:
                         self.adb_frame.config(text="📱 ADB设备管理")
-                        # ADB模式：修改连接按钮，显示ADB键盘按钮
+                        # ADB模式：修改连接按钮，显示ADB键盘按钮和远程桌面按钮
                         if "连接HDC" in text:
                             widget.config(text="🔗 连接ADB")
                         elif "安装ADB键盘" in text and not is_visible:
+                            widget.pack(side=tk.LEFT, padx=(0, 8))
+                        elif "远程桌面" in text and not is_visible:
                             widget.pack(side=tk.LEFT, padx=(0, 8))
                 
                 # 确保关注公众号按钮始终在最后
@@ -4124,11 +4162,436 @@ class PhoneAgentGUI:
                 tree.delete(item)
             
             self.status_var.set("✅ 已清空所有历史记录")
+    
+    def _handle_scrcpy_exit(self, returncode):
+        """处理 scrcpy 退出的情况"""
+        if returncode != 0:
+            self._append_output(f"❌ scrcpy启动失败，退出代码: {returncode}\n")
+            self._append_output("💡 请检查:\n")
+            self._append_output("   1. scrcpy是否已安装并加入PATH\n")
+            self._append_output("   2. 设备是否已授权\n")
+            self._append_output("   3. 设备屏幕是否已解锁\n")
+            self.status_var.set("❌ 远程桌面启动失败")
+        else:
+            self._append_output("✅ scrcpy已正常退出\n")
+            self.status_var.set("✅ 远程控制已结束")
+            
+        # 远程桌面正常退出，不做任何额外操作，主程序继续运行
+        self._append_output("✅ 远程桌面已正常关闭，主程序继续运行\n")
+    
+    def _exit_application(self):
+        """安全退出应用程序"""
+        try:
+            # 停止所有正在运行的进程
+            if hasattr(self, 'process') and self.process:
+                try:
+                    self.process.terminate()
+                    self.process.wait(timeout=2)
+                except:
+                    try:
+                        self.process.kill()
+                    except:
+                        pass
+            
+            # 清理资源
+            self._append_output("🧹 正在清理资源...\n")
+            self.root.update()
+            
+            # 退出应用程序
+            self._append_output("👋 程序已退出\n")
+            self.root.quit()
+            self.root.destroy()
+            
+            # 强制退出进程
+            import sys
+            import os
+            os._exit(0)
+            
+        except Exception as e:
+            # 如果正常退出失败，强制退出
+            import os
+            os._exit(0)
+    
+    def open_remote_desktop(self):
+        """打开远程桌面控制对话框"""
+        # 检查是否有设备连接
+        if not self.connected_devices:
+            messagebox.showwarning("设备检查", "未检测到连接的设备，请先连接设备")
+            return
+        
+        # 获取当前设备类型
+        device_type = self.device_type.get()
+        device_type_en = "hdc" if device_type == "鸿蒙" else "adb"
+        device_display = "HDC" if device_type_en == "hdc" else "ADB"
+        
+        # 检查是否有可用设备
+        available_devices = [d for d in self.connected_devices if d['status'] == 'device']
+        if not available_devices:
+            messagebox.showwarning("设备检查", f"没有可用的{device_display}设备")
+            return
+        
+        # 创建远程桌面对话框
+        dialog = tk.Toplevel(self.root)
+        dialog.title(f"🖥️ {device_display}远程桌面控制")
+        dialog.geometry("550x450")
+        dialog.resizable(True, True)
+        
+        # 保存对话框引用
+        self.remote_desktop_window = dialog
+        
+        # 居中显示在主窗口中间
+        self.center_window(dialog)
+        
+        # 主框架
+        main_frame = ttk.Frame(dialog, padding="20")
+        main_frame.pack(fill=tk.BOTH, expand=True)
+        main_frame.rowconfigure(2, weight=1)  # 让控制区域可扩展
+        
+        # 标题
+        title_label = ttk.Label(main_frame, text=f"🖥️ {device_display}远程桌面控制", 
+                               font=('Microsoft YaHei', 12, 'bold'))
+        title_label.grid(row=0, column=0, pady=(0, 15), sticky=tk.W+tk.E)
+        
+        # 设备选择区域
+        device_frame = ttk.LabelFrame(main_frame, text="📱 选择设备", padding="10")
+        device_frame.grid(row=1, column=0, sticky=(tk.W, tk.E), pady=(0, 15))
+        device_frame.columnconfigure(0, weight=1)
+        
+        # 填充设备列表，独立选择，默认选择第一个设备
+        device_options = []
+        device_ids = []
+        
+        for device in available_devices:
+            if device['status'] == 'device':
+                display_name = device['id']
+                device_ids.append(device['id'])
+                if device['info'] and 'model' in device['info']:
+                    display_name += f" ({device['info']['model']})"
+                device_options.append(display_name)
+        
+        # 设备选择下拉框 - 完全模仿主界面的方式
+        device_var = tk.StringVar()
+        device_combo = ttk.Combobox(device_frame, textvariable=device_var, 
+                                   state="readonly", font=('Microsoft YaHei', 10))
+        device_combo.grid(row=0, column=0, sticky=(tk.W, tk.E), padx=(0, 10))
+        device_combo.columnconfigure(0, weight=1)
+        
+        # 设置设备选项
+        device_combo['values'] = device_options
+        
+        # 设置默认选择第一个设备
+        if device_options:
+            device_var.set(device_options[0])  # 设置变量为显示名称
+            device_combo.current(0)  # 设置选中索引
+        
+        # 控制按钮区域
+        control_frame = ttk.LabelFrame(main_frame, text="🎮 远程控制", padding="10")
+        control_frame.grid(row=2, column=0, sticky=(tk.W, tk.E, tk.N, tk.S), pady=(0, 15))
+        control_frame.columnconfigure(0, weight=1)
+        
+        # 说明文字
+        info_label = ttk.Label(control_frame, 
+                              text="通过scrcpy工具实现设备桌面镜像和控制\n" + 
+                                   "• 实时查看设备桌面\n" +
+                                   "• 鼠标控制设备操作\n" +
+                                   "• 键盘输入文字\n" +
+                                   "• 文件拖拽传输（部分设备支持）\n" +
+                                   "• 关闭远程桌面不会影响主程序运行",
+                              font=('Microsoft YaHei', 9), foreground='#666666')
+        info_label.grid(row=0, column=0, columnspan=3, pady=(0, 15), sticky=tk.W)
+        
+        # 控制选项
+        options_frame = ttk.Frame(control_frame)
+        options_frame.grid(row=1, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(0, 15))
+        
+        # 分辨率选项
+        ttk.Label(options_frame, text="分辨率限制:", font=('Microsoft YaHei', 9)).grid(row=0, column=0, sticky=tk.W, padx=(0, 10))
+        resolution_var = tk.StringVar(value="1024")
+        resolution_combo = ttk.Combobox(options_frame, textvariable=resolution_var, 
+                                      width=10, state="readonly", font=('Microsoft YaHei', 9))
+        resolution_combo['values'] = ('720', '1024', '1280', '1920', '无限制')
+        resolution_combo.grid(row=0, column=1, sticky=tk.W, padx=(0, 20))
+        
+        # 位深选项
+        ttk.Label(options_frame, text="位深:", font=('Microsoft YaHei', 9)).grid(row=0, column=2, sticky=tk.W, padx=(0, 10))
+        bit_depth_var = tk.StringVar(value="32")
+        bit_depth_combo = ttk.Combobox(options_frame, textvariable=bit_depth_var, 
+                                      width=8, state="readonly", font=('Microsoft YaHei', 9))
+        bit_depth_combo['values'] = ('8', '16', '32')
+        bit_depth_combo.grid(row=0, column=3, sticky=tk.W)
+        
+        # 控制按钮
+        buttons_frame = ttk.Frame(control_frame)
+        buttons_frame.grid(row=2, column=0, columnspan=3, pady=10)
+        
+        def start_remote_control():
+            """启动远程控制"""
+            selected_index = device_combo.current()
+            if selected_index < 0:
+                messagebox.showwarning("设备选择", "请先选择一个设备")
+                return
+            
+            # 使用过滤后的设备ID列表，确保索引匹配
+            device_id = device_ids[selected_index]
+            
+            # 构建scrcpy命令
+            scrcpy_cmd = ['scrcpy']
+            
+            # 添加设备ID
+            if ':' in device_id:  # 远程设备
+                scrcpy_cmd.extend(['-s', device_id])
+            else:  # USB设备，对于多个设备需要指定ID
+                if len(available_devices) > 1:
+                    scrcpy_cmd.extend(['-s', device_id])
+            
+            # 添加分辨率限制
+            resolution = resolution_var.get()
+            if resolution != '无限制':
+                scrcpy_cmd.extend(['-m', resolution])
+            
+            # 添加位深
+            bit_depth = bit_depth_var.get()
+            scrcpy_cmd.extend(['-b', bit_depth + 'M'])
+            
+            # 添加其他有用选项
+            scrcpy_cmd.extend([
+                '--stay-awake',      # 保持设备唤醒
+                '--turn-screen-off',  # 关闭设备屏幕以节省电量
+                '--window-title', f'{device_display}远程控制 - {device_id}'  # 设置窗口标题
+            ])
+            
+            self._append_output(f"🖥️ 正在启动{device_display}远程控制...\n")
+            self._append_output(f"📱 目标设备: {device_id}\n")
+            self._append_output(f"🔧 执行命令: {' '.join(scrcpy_cmd)}\n")
+            
+            try:
+                # 在新进程中启动scrcpy（隐藏CMD窗口）
+                import subprocess
+                import os
+                import threading
+                import time
+                
+                # 在Windows上隐藏控制台窗口
+                if os.name == 'nt':
+                    creationflags = subprocess.CREATE_NO_WINDOW
+                else:
+                    creationflags = 0
+                
+                process = subprocess.Popen(scrcpy_cmd, creationflags=creationflags)
+                
+                # 给scrcpy一些时间启动，然后监控其状态
+                def monitor_scrcpy():
+                    import time
+                    time.sleep(3)  # 等待3秒让scrcpy完全启动
+                    
+                    # 持续监控 scrcpy 进程状态
+                    while True:
+                        if process.poll() is not None:
+                            # scrcpy已经退出
+                            returncode = process.returncode
+                            
+                            # 在主线程中更新UI，不再需要传递自动退出选项
+                            self.root.after(0, lambda rc=returncode: self._handle_scrcpy_exit(rc))
+                            break
+                        
+                        time.sleep(1)  # 每秒检查一次进程状态
+                
+                threading.Thread(target=monitor_scrcpy, daemon=True).start()
+                
+                self._append_output("✅ scrcpy远程控制已启动\n")
+                self._append_output("💡 关闭远程桌面窗口不会影响主程序运行\n")
+                self.status_var.set(f"🖥️ {device_display}远程控制运行中")
+                
+                # 关闭对话框
+                dialog.destroy()
+                
+            except FileNotFoundError:
+                messagebox.showerror("错误", 
+                                   "未找到scrcpy程序！\n\n" +
+                                   "请按以下步骤安装scrcpy：\n" +
+                                   "1. 访问 https://github.com/Genymobile/scrcpy\n" +
+                                   "2. 下载对应平台的scrcpy程序\n" +
+                                   "3. 将scrcpy.exe (Windows) 或 scrcpy (Linux/Mac) 加入系统PATH\n" +
+                                   "4. 或将scrcpy程序复制到本程序目录")
+            except Exception as e:
+                messagebox.showerror("错误", f"启动远程控制失败: {str(e)}")
+                self._append_output(f"❌ 启动远程控制失败: {str(e)}\n")
+        
+        def install_scrcpy():
+            """显示scrcpy安装说明"""
+            install_window = tk.Toplevel(dialog)
+            install_window.title("📦 scrcpy安装说明")
+            install_window.geometry("500x400")
+            install_window.resizable(True, True)
+            
+            # 居中显示
+            self.center_window(install_window, 500, 400)
+            
+            main_frame = ttk.Frame(install_window, padding="20")
+            main_frame.pack(fill=tk.BOTH, expand=True)
+            
+            title_label = ttk.Label(main_frame, text="📦 scrcpy安装说明", 
+                                   font=('Microsoft YaHei', 12, 'bold'))
+            title_label.pack(pady=(0, 15))
+            
+            # 创建滚动文本框
+            from tkinter import scrolledtext
+            install_text = scrolledtext.ScrolledText(main_frame, wrap=tk.WORD, 
+                                                   font=('Microsoft YaHei', 9), 
+                                                   bg='#f8f8f8')
+            install_text.pack(fill=tk.BOTH, expand=True, pady=(0, 15))
+            
+            install_info = """
+scrcpy (Screen Copy) 是一款开源的Android设备屏幕镜像工具
+
+🌟 主要功能：
+• 实时显示Android设备屏幕
+• 鼠标控制设备操作
+• 键盘输入文字和快捷键
+• 文件拖拽传输
+• 录屏功能
+• 多设备支持
+
+📥 安装方法：
+
+方法一：下载预编译版本（推荐）
+1. 访问官方发布页面：https://github.com/Genymobile/scrcpy/releases
+2. 下载最新版本的 scrcpy-win64.zip (Windows)
+3. 解压到任意目录
+4. 将 scrcpy.exe 所在目录添加到系统PATH环境变量
+
+方法二：包管理器安装
+Windows (使用 Scoop):
+    scoop install scrcpy
+
+Linux (Ubuntu/Debian):
+    sudo apt install scrcpy
+
+macOS (使用 Homebrew):
+    brew install scrcpy
+
+方法三：源码编译
+1. 安装依赖：
+   Windows: 需要MSYS2环境
+   Linux: sudo apt install build-essential pkg-config meson ninja-build
+   macOS: brew install meson ninja
+
+2. 克隆源码：
+   git clone https://github.com/Genymobile/scrcpy
+   cd scrcpy
+
+3. 编译安装：
+   meson build
+   cd build
+   ninja
+   ninja install
+
+🔧 验证安装：
+打开命令行，输入：scrcpy --version
+如果显示版本信息，说明安装成功
+
+📱 使用要求：
+• Android 5.0+ (API 21+)
+• 开启USB调试
+• 设备已授权连接
+
+💡 使用提示：
+• 首次连接需要在设备上授权
+• 部分手机需要在开发者选项中开启"USB安装"
+• 如遇性能问题，可降低分辨率或位深
+            """
+            
+            install_text.insert("1.0", install_info)
+            install_text.config(state=tk.DISABLED)
+            
+            # 关闭按钮
+            ttk.Button(main_frame, text="关闭", command=install_window.destroy).pack()
+        
+        def refresh_device_list():
+            """刷新设备列表并重新选择主界面设备"""
+            self.refresh_devices()
+            
+            # 重新获取可用设备
+            new_available_devices = [d for d in self.connected_devices if d['status'] == 'device']
+            
+            # 重新填充设备列表
+            new_device_options = []
+            new_selected_device_id = self.selected_device_id.get()
+            new_default_index = 0
+            new_main_device_id = extract_device_id(new_selected_device_id)
+            
+            new_found_main_device = False
+            for i, device in enumerate(new_available_devices):
+                display_name = device['id']
+                if device['info'] and 'model' in device['info']:
+                    display_name += f" ({device['info']['model']})"
+                new_device_options.append(display_name)
+                
+                if new_main_device_id and device['id'] == new_main_device_id:
+                    new_default_index = i
+                    new_found_main_device = True
+                elif not new_found_main_device and new_main_device_id and device['id'].startswith(new_main_device_id):
+                    new_default_index = i
+                elif not new_found_main_device and i == 0:
+                    new_default_index = 0
+            
+            # 更新下拉框
+            device_combo['values'] = new_device_options
+            if new_device_options:
+                device_combo.current(new_default_index)
+                if new_found_main_device:
+                    self._append_output("🔄 已刷新并同步主界面设备\n")
+                else:
+                    self._append_output("🔄 设备列表已刷新\n")
+            else:
+                self._append_output("⚠️ 未找到可用设备\n")
+
+        # 按钮布局
+        ttk.Button(buttons_frame, text="🚀 启动远程控制", 
+                  command=start_remote_control, 
+                  style='Success.TButton').grid(row=0, column=0, padx=5)
+        
+        ttk.Button(buttons_frame, text="🔄 刷新设备", 
+                  command=refresh_device_list).grid(row=0, column=1, padx=5)
+        
+        ttk.Button(buttons_frame, text="📦 安装说明", 
+                  command=install_scrcpy).grid(row=0, column=2, padx=5)
+        
+        ttk.Button(buttons_frame, text="❌ 关闭", 
+                  command=dialog.destroy, 
+                  style='Danger.TButton').grid(row=0, column=3, padx=5)
+        
+
+        
+        # 绑定窗口关闭事件，清除引用
+        def on_dialog_close():
+            self.remote_desktop_window = None
+            dialog.destroy()
+        dialog.protocol("WM_DELETE_WINDOW", on_dialog_close)
 
 
 def main():
     root = tk.Tk()
     app = PhoneAgentGUI(root)
+    
+    # 设置窗口关闭事件处理
+    def on_closing():
+        """窗口关闭时的处理"""
+        if app.running:
+            # 如果正在运行任务，询问用户
+            import tkinter.messagebox as msgbox
+            result = msgbox.askyesno("确认退出", 
+                                   "程序正在运行任务，确定要退出吗？\n\n" +
+                                   "建议先停止当前任务再退出程序。")
+            if result:
+                # 用户确认退出，强制停止任务并退出
+                app.stop_agent()
+                app._exit_application()
+        else:
+            # 直接退出
+            app._exit_application()
+    
+    root.protocol("WM_DELETE_WINDOW", on_closing)
     root.mainloop()
 
 
