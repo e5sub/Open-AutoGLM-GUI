@@ -123,7 +123,7 @@ from task_simplifier import TaskSimplifierManager
 class PhoneAgentGUI:
     def __init__(self, root):
         self.root = root
-        self.root.title("鸡哥手机助手 v1.6.1 - 更多好玩的工具请关注微信公众号：菜芽创作小助手")
+        self.root.title("鸡哥手机助手 v1.7 - 更多好玩的工具请关注微信公众号：菜芽创作小助手")
         self.root.geometry("1200x750")
         self.root.minsize(1100, 650)
         
@@ -369,24 +369,86 @@ class PhoneAgentGUI:
         return center_x, center_y
     
     def center_window(self, window, width=None, height=None):
-        """将窗口居中显示在主窗口中间"""
-        # 使用计算方法获取位置
-        if width and height:
-            center_x, center_y = self._calculate_center_position(width, height)
-            window.geometry(f"{width}x{height}+{center_x}+{center_y}")
-        else:
+        """将窗口居中显示在主窗口中间，避免闪现"""
+        try:
+            # 先隐藏窗口，避免闪现
+            window.withdraw()
             window.update_idletasks()
-            child_width = window.winfo_width()
-            child_height = window.winfo_height()
             
-            # 如果窗口还没有实际大小，使用默认值
-            if child_width <= 1:
-                child_width = 500
-            if child_height <= 1:
-                child_height = 400
+            # 使用计算方法获取位置
+            if width and height:
+                center_x, center_y = self._calculate_center_position(width, height)
+                window.geometry(f"{width}x{height}+{center_x}+{center_y}")
+            else:
+                child_width = window.winfo_width()
+                child_height = window.winfo_height()
                 
-            center_x, center_y = self._calculate_center_position(child_width, child_height)
-            window.geometry(f"+{center_x}+{center_y}")
+                # 如果窗口还没有实际大小，使用默认值
+                if child_width <= 1:
+                    child_width = 500
+                if child_height <= 1:
+                    child_height = 400
+                    
+                center_x, center_y = self._calculate_center_position(child_width, child_height)
+                window.geometry(f"+{center_x}+{center_y}")
+            
+            # 最后显示窗口
+            window.deiconify()
+            window.update_idletasks()
+            
+        except Exception as e:
+            print(f"居中窗口失败: {e}")
+            # 如果失败，确保窗口可见
+            try:
+                window.deiconify()
+            except:
+                pass
+    
+    def create_centered_toplevel(self, parent, title, width, height, resizable=True):
+        """创建居中显示的Toplevel窗口，避免闪现
+        
+        Args:
+            parent: 父窗口
+            title: 窗口标题
+            width: 窗口宽度
+            height: 窗口高度
+            resizable: 是否可调整大小
+        
+        Returns:
+            创建的Toplevel窗口
+        """
+        try:
+            # 先计算居中位置
+            center_x, center_y = self._calculate_center_position(width, height)
+            
+            # 创建窗口时直接设置位置
+            window = tk.Toplevel(parent)
+            window.title(title)
+            window.geometry(f"{width}x{height}+{center_x}+{center_y}")
+            
+            # 设置是否可调整大小
+            if resizable:
+                window.resizable(True, True)
+            else:
+                window.resizable(False, False)
+            
+            # 确保窗口正确显示
+            window.update_idletasks()
+            
+            return window
+            
+        except Exception as e:
+            print(f"创建居中窗口失败: {e}")
+            # 降级方案：使用普通的Toplevel
+            window = tk.Toplevel(parent)
+            window.title(title)
+            window.geometry(f"{width}x{height}")
+            if resizable:
+                window.resizable(True, True)
+            else:
+                window.resizable(False, False)
+            self.center_window(window, width, height)
+            return window
                 
     def _create_default_config(self):
         """创建默认配置"""
@@ -1275,8 +1337,8 @@ class PhoneAgentGUI:
     def open_lock_password_dialog(self):
         """弹出对话框用于设置自动唤醒/解锁密码（用于运行时自动尝试解锁设备）。"""
         try:
-            dialog = tk.Toplevel(self.root)
-            dialog.title("设置自动唤醒/解锁密码")
+            # 使用优化的居中窗口创建方法
+            dialog = self.create_centered_toplevel(self.root, "设置自动唤醒/解锁密码", 480, 180, resizable=False)
             dialog.transient(self.root)
             dialog.grab_set()
 
@@ -2356,10 +2418,8 @@ class PhoneAgentGUI:
         
     def connect_remote_device(self):
         """远程连接ADB设备"""
-        dialog = tk.Toplevel(self.root)
-        dialog.title("远程ADB连接")
-        dialog.geometry("500x250")
-        dialog.resizable(False, False)
+        # 使用优化的居中窗口创建方法
+        dialog = self.create_centered_toplevel(self.root, "远程ADB连接", 500, 250, resizable=False)
         
         # 设置对话框样式和配色，与主窗口保持一致
         dialog.configure(bg='#f0f0f0')
@@ -3486,18 +3546,13 @@ class PhoneAgentGUI:
     
     def show_task_simplifier_dialog(self, current_task):
         """显示任务精简器对话框"""
-        dialog = tk.Toplevel(self.root)
-        dialog.title("🤖 AI润色器")
-        dialog.geometry("850x650")
-        dialog.resizable(True, True)
+        # 使用优化的居中窗口创建方法
+        dialog = self.create_centered_toplevel(self.root, "🤖 AI润色器", 850, 650)
         dialog.transient(self.root)
         dialog.grab_set()
         
         # 加载上次选择的AI平台
         last_platform = self._load_last_selected_platform()
-        
-        # 居中显示在主窗口中间
-        self.center_window(dialog)
         
         # 创建主容器，无边距
         main_container = ttk.Frame(dialog)
@@ -4040,15 +4095,10 @@ class PhoneAgentGUI:
     
     def set_ios_device_ip(self):
         """设置iOS设备IP地址"""
-        dialog = tk.Toplevel(self.root)
-        dialog.title("🍎 iOS设备IP设置")
-        dialog.geometry("520x360")  # 继续增加窗口高度
-        dialog.resizable(True, True)  # 允许调整大小
+        # 使用优化的居中窗口创建方法
+        dialog = self.create_centered_toplevel(self.root, "🍎 iOS设备IP设置", 520, 360)
         dialog.transient(self.root)  # 设置为父窗口的子窗口
         dialog.grab_set()  # 模态对话框
-        
-        # 居中显示在主窗口中间
-        self.center_window(dialog)
         
         # 主框架
         main_frame = ttk.Frame(dialog, padding="20")
@@ -4576,10 +4626,8 @@ class PhoneAgentGUI:
     
     def show_task_history(self):
         """显示任务历史窗口"""
-        # 创建历史记录窗口
-        history_window = tk.Toplevel(self.root)
-        history_window.title("📚 任务历史记录")
-        history_window.geometry("900x550")
+        # 使用优化的居中窗口创建方法
+        history_window = self.create_centered_toplevel(self.root, "📚 任务历史记录", 900, 550)
         history_window.transient(self.root)
         history_window.grab_set()
         
@@ -4855,17 +4903,11 @@ class PhoneAgentGUI:
             messagebox.showwarning("设备检查", f"没有可用的{device_display}设备")
             return
         
-        # 创建远程桌面对话框
-        dialog = tk.Toplevel(self.root)
-        dialog.title(f"🖥️ {device_display}远程桌面控制")
-        dialog.geometry("550x450")
-        dialog.resizable(True, True)
+        # 使用优化的居中窗口创建方法
+        dialog = self.create_centered_toplevel(self.root, f"🖥️ {device_display}远程桌面控制", 550, 450)
         
         # 保存对话框引用
         self.remote_desktop_window = dialog
-        
-        # 居中显示在主窗口中间
-        self.center_window(dialog)
         
         # 主框架
         main_frame = ttk.Frame(dialog, padding="20")
@@ -5044,13 +5086,8 @@ class PhoneAgentGUI:
         
         def install_scrcpy():
             """显示scrcpy安装说明"""
-            install_window = tk.Toplevel(dialog)
-            install_window.title("📦 scrcpy安装说明")
-            install_window.geometry("500x400")
-            install_window.resizable(True, True)
-            
-            # 居中显示
-            self.center_window(install_window, 500, 400)
+            # 使用优化的居中窗口创建方法
+            install_window = self.create_centered_toplevel(dialog, "📦 scrcpy安装说明", 500, 400)
             
             main_frame = ttk.Frame(install_window, padding="20")
             main_frame.pack(fill=tk.BOTH, expand=True)
