@@ -6,7 +6,8 @@ from typing import Optional, Tuple
 
 def _adb_shell(cmd: str, adb: str = "adb", timeout: int = 5) -> str:
     try:
-        p = subprocess.run([adb, 'shell', cmd], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout)
+        creationflags = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
+        p = subprocess.run([adb, 'shell', cmd], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout, creationflags=creationflags)
         return p.stdout.decode(errors='ignore')
     except Exception:
         return ""
@@ -46,14 +47,15 @@ def wake_and_unlock(adb: str = "adb", max_attempts: int = 3, swipe: Optional[Tup
     顺序：发送 WAKEUP -> 发送 MENU (或解锁键) -> 可选滑动解锁。
     返回 True 表示检测到屏幕已点亮。
     """
+    creationflags = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
     for _ in range(max_attempts):
-        subprocess.run([adb, 'shell', 'input', 'keyevent', '224'])  # KEYCODE_WAKEUP
+        subprocess.run([adb, 'shell', 'input', 'keyevent', '224'], creationflags=creationflags)  # KEYCODE_WAKEUP
         time.sleep(0.4)
-        subprocess.run([adb, 'shell', 'input', 'keyevent', '82'])   # KEYCODE_MENU (通常可解锁)
+        subprocess.run([adb, 'shell', 'input', 'keyevent', '82'], creationflags=creationflags)   # KEYCODE_MENU (通常可解锁)
         time.sleep(0.4)
         if swipe:
             x1, y1, x2, y2 = swipe
-            subprocess.run([adb, 'shell', 'input', 'swipe', str(x1), str(y1), str(x2), str(y2)])
+            subprocess.run([adb, 'shell', 'input', 'swipe', str(x1), str(y1), str(x2), str(y2)], creationflags=creationflags)
             time.sleep(0.5)
 
         # 如果提供了密码，尝试通过输入密码解锁（在滑动或按键后）
@@ -61,10 +63,10 @@ def wake_and_unlock(adb: str = "adb", max_attempts: int = 3, swipe: Optional[Tup
             try:
                 # input text 对空格的处理需要替换为 %s
                 esc = str(password).replace(' ', '%s')
-                subprocess.run([adb, 'shell', 'input', 'text', esc])
+                subprocess.run([adb, 'shell', 'input', 'text', esc], creationflags=creationflags)
                 time.sleep(0.3)
                 # 按回车或确认键
-                subprocess.run([adb, 'shell', 'input', 'keyevent', '66'])
+                subprocess.run([adb, 'shell', 'input', 'keyevent', '66'], creationflags=creationflags)
                 time.sleep(0.6)
             except Exception:
                 pass
@@ -73,7 +75,7 @@ def wake_and_unlock(adb: str = "adb", max_attempts: int = 3, swipe: Optional[Tup
             return True
 
         # 备用：短按电源键（某些机型需要）
-        subprocess.run([adb, 'shell', 'input', 'keyevent', '26'])
+        subprocess.run([adb, 'shell', 'input', 'keyevent', '26'], creationflags=creationflags)
         time.sleep(0.6)
 
     return is_screen_on(adb)
@@ -123,7 +125,7 @@ from task_simplifier import TaskSimplifierManager
 class PhoneAgentGUI:
     def __init__(self, root):
         self.root = root
-        self.root.title("鸡哥手机助手 v1.7 - 更多好玩的工具请关注微信公众号：菜芽创作小助手")
+        self.root.title("鸡哥手机助手 v1.8 - 更多好玩的工具请关注微信公众号：菜芽创作小助手")
         self.root.geometry("1200x750")
         self.root.minsize(1100, 650)
         
@@ -162,6 +164,8 @@ class PhoneAgentGUI:
         
         # 设备类型防重复变量
         self._last_device_type = None
+        # iOS IP对话框状态标志
+        self._ios_ip_dialog_open = False
 
         # 初始化任务精简器
         self.task_simplifier = TaskSimplifierManager()
@@ -299,9 +303,41 @@ class PhoneAgentGUI:
                 self.selected_device_id.set(selected_device)
                 print(f"🔍 配置加载: 设置selected_device_id为 '{selected_device}'")
             
-            # 如果界面已创建，触发设备类型变化处理以更新按钮显示
+            # 如果界面已创建，只更新界面显示，不自动扫描设备
             if hasattr(self, 'adb_frame'):
-                self.on_device_type_change()
+                current_device_type = self.device_type.get()
+                self._last_device_type = current_device_type  # 更新防重复标志
+                
+                # 只更新界面显示，不执行设备扫描
+                if hasattr(self, 'adb_control_frame'):
+                    # 将中文选项转换为英文值用于内部处理
+                    if current_device_type == "安卓":
+                        device_type_en = "adb"
+                    elif current_device_type == "鸿蒙":
+                        device_type_en = "hdc"
+                    elif current_device_type == "iOS":
+                        device_type_en = "ios"
+                    else:
+                        device_type_en = "adb"  # 默认
+                    
+                    # 只更新标题和按钮文本，不扫描设备
+                    if device_type_en == "hdc":
+                        self.adb_frame.config(text="📱 HDC设备管理")
+                    elif device_type_en == "ios":
+                        self.adb_frame.config(text="🍎 iOS设备管理")
+                        if hasattr(self, 'device_status_label'):
+                            current_ip = self.ios_device_ip.get()
+                            if current_ip and current_ip != "localhost":
+                                self.device_status_label.config(text=f"iOS设备IP: {current_ip}")
+                            else:
+                                self.device_status_label.config(text="iOS设备未配置IP")
+                    else:
+                        self.adb_frame.config(text="📱 ADB设备管理")
+                        if hasattr(self, 'device_status_label'):
+                            if selected_device:
+                                self.device_status_label.config(text=f"已连接: {selected_device}")
+                            else:
+                                self.device_status_label.config(text=f"未连接ADB设备")
             
             # 加载远程连接配置
             self.last_remote_connection = config.get('remote_connection', {
@@ -455,9 +491,9 @@ class PhoneAgentGUI:
         if hasattr(self, 'status_var'):
             self.status_var.set("📝 使用默认配置")
         
-        # 即使使用默认配置，也需要执行设备扫描
-        if hasattr(self, 'adb_frame'):
-            self.on_device_type_change()
+        # 首次启动时不自动扫描设备，避免弹出CMD窗口
+        # 用户手动操作时会自动触发设备扫描
+        pass
         
     def setup_styles(self):
         """设置界面样式"""
@@ -686,8 +722,39 @@ class PhoneAgentGUI:
                                             font=('Microsoft YaHei', 9), foreground='red')
             self.device_status_label.grid(row=0, column=1, padx=(10, 0))
             
-            # 根据当前设备类型初始化按钮状态
-            self.on_device_type_change()
+            # 初始化设备类型但不自动扫描设备（避免启动时弹出CMD窗口）
+            # 用户手动操作时会自动触发设备扫描
+            current_device_type = self.device_type.get()
+            self._last_device_type = current_device_type  # 设置初始值防止重复扫描
+            
+            # 只更新界面显示，不扫描设备
+            if hasattr(self, 'adb_frame'):
+                if hasattr(self, 'adb_control_frame'):
+                    # 将中文选项转换为英文值用于内部处理
+                    if current_device_type == "安卓":
+                        device_type_en = "adb"
+                    elif current_device_type == "鸿蒙":
+                        device_type_en = "hdc"
+                    elif current_device_type == "iOS":
+                        device_type_en = "ios"
+                    else:
+                        device_type_en = "adb"  # 默认
+                    
+                    # 只更新标题和按钮文本，不执行设备扫描
+                    if device_type_en == "hdc":
+                        self.adb_frame.config(text="📱 HDC设备管理")
+                    elif device_type_en == "ios":
+                        self.adb_frame.config(text="🍎 iOS设备管理")
+                        if hasattr(self, 'device_status_label'):
+                            current_ip = self.ios_device_ip.get()
+                            if current_ip and current_ip != "localhost":
+                                self.device_status_label.config(text=f"iOS设备IP: {current_ip}")
+                            else:
+                                self.device_status_label.config(text="iOS设备未配置IP")
+                    else:
+                        self.adb_frame.config(text="📱 ADB设备管理")
+                        if hasattr(self, 'device_status_label'):
+                            self.device_status_label.config(text=f"未连接ADB设备")
             
             # 按钮区域
             button_frame = ttk.Frame(self.main_frame)
@@ -827,24 +894,8 @@ class PhoneAgentGUI:
             self.status_var.set("🍎 准备运行iOS任务...")
             self._run_ios_agent(base_url, model, apikey, task)
         else:
-            # 无论在开发环境还是打包环境中，都使用直接运行方式
-            # 在正式运行前自动检测并尝试唤醒/解锁屏幕（不展示按钮）
-            try:
-                import os
-                tool_name = 'adb' if self.device_type.get() == '安卓' else 'hdc'
-                self._append_output(f"🔌 正在检测并唤醒设备（使用: {tool_name}）...\n")
-                self.status_var.set("🔌 检查并唤醒设备...")
-                # 使用默认滑动解锁坐标，可根据设备分辨率调整
-                pwd = os.getenv('PHONE_AGENT_LOCK_PASSWORD', '')
-                ok = ensure_awake_and_unlocked(adb=tool_name, swipe=(300, 1000, 300, 300), password=pwd if pwd else None)
-                if ok:
-                    self._append_output("✅ 设备已唤醒或已解锁\n")
-                else:
-                    self._append_output("⚠️ 无法唤醒设备，继续尝试运行（请手动检查设备）\n")
-            except Exception as e:
-                self._append_output(f"唤醒检测出错: {str(e)}\n")
-
-            self._run_agent_direct(base_url, model, apikey, task, selected_device)
+            # 异步执行系统检查，避免阻塞界面
+            self._run_agent_async(base_url, model, apikey, task, selected_device)
         
     def _run_adb_silent(self, cmd, timeout=10):
         """静默执行ADB命令，避免弹窗"""
@@ -855,9 +906,10 @@ class PhoneAgentGUI:
 
     def _run_ios_agent(self, base_url, model, apikey, task):
         """运行iOS设备代理"""
-        import subprocess
         import sys
         import os
+        import threading
+        import traceback
         
         try:
             # 获取iOS设备IP地址
@@ -866,54 +918,109 @@ class PhoneAgentGUI:
                 messagebox.showerror("错误", "请先设置iOS设备IP地址")
                 return
             
-            # 构建iOS命令
+            # 构建iOS脚本路径
             ios_script_path = os.path.join(os.path.dirname(__file__), "ios.py")
             if not os.path.exists(ios_script_path):
                 self._append_output("❌ 未找到ios.py脚本文件\n")
                 messagebox.showerror("错误", "未找到ios.py脚本文件")
                 return
             
-            # 构建命令，将localhost替换为设置的IP地址
-            cmd = [
-                sys.executable, ios_script_path,
-                "--base-url", base_url,
-                "--model", model,
-                "--api-key", apikey,
-                "--wda-url", f"http://{ios_ip}:8100",
-                task
-            ]
-            
-            self._append_output(f"🍎 执行iOS命令: {' '.join(cmd)}\n")
-            
-            # 启动进程
-            self.process = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                bufsize=1,
-                universal_newlines=True,
-                cwd=os.path.dirname(__file__)
-            )
-            
-            # 监控输出
-            def monitor_output():
+            # 使用模块导入的方式，避免创建新进程和新窗口
+            def run_ios_in_thread():
                 try:
-                    for line in iter(self.process.stdout.readline, ''):
-                        if line:
-                            self.root.after(0, lambda text=line: self._append_output(text))
-                        if not self.running:
-                            break
+                    self._append_output(f"🍎 开始执行iOS任务...\n")
+                    
+                    # 模拟命令行参数
+                    old_argv = sys.argv[:]
+                    sys.argv = [
+                        ios_script_path,
+                        "--base-url", base_url,
+                        "--model", model,
+                        "--apikey", apikey,  # 修正参数名
+                        "--wda-url", f"http://{ios_ip}:8100",
+                        task
+                    ]
+                    
+                    # 重定向stdout和stderr到GUI
+                    import io
+                    from contextlib import redirect_stdout, redirect_stderr
+                    
+                    # 创建输出捕获器
+                    class OutputCapture:
+                        def __init__(self, append_func):
+                            self.append_func = append_func
+                            self.buffer = ""
+                            
+                        def write(self, text):
+                            # 立即写入所有文本，包括换行符
+                            if text:
+                                self.append_func(text)
+                                self.buffer += text
+                                
+                        def flush(self):
+                            # 刷新缓冲区（这里不需要，因为我们立即写入）
+                            pass
+                    
+                    output_capture = OutputCapture(self._append_output)
+                    
+                    # 在新线程中执行ios.py并捕获输出
+                    with redirect_stdout(output_capture), redirect_stderr(output_capture):
+                        # 执行ios.py的main逻辑
+                        import ios
+                        # 显式调用main函数，因为import不会自动执行
+                        ios.main()
+                    
+                    # 恢复原始命令行参数
+                    sys.argv = old_argv
+                    
+                    self._append_output(f"🍎 iOS任务执行完成\n")
+                    success = True
+                    
                 except Exception as e:
-                    self.root.after(0, lambda: self._append_output(f"输出监控错误: {str(e)}\n"))
+                    self._append_output(f"❌ iOS任务执行失败: {str(e)}\n")
+                    self._append_output(f"详细错误: {traceback.format_exc()}\n")
+                    success = False
                 finally:
-                    if self.process:
-                        self.process.stdout.close()
-                        return_code = self.process.wait()
-                        self.root.after(0, lambda: self._on_process_finished(return_code))
+                    # 在主线程中更新UI状态
+                    return_code = 0 if success else -1
+                    self.root.after(0, lambda: self._on_process_finished(return_code))
             
-            # 启动监控线程
-            threading.Thread(target=monitor_output, daemon=True).start()
+            # 在新线程中运行iOS任务，避免阻塞GUI
+            thread = threading.Thread(target=run_ios_in_thread, daemon=True)
+            thread.start()
+            
+            # 设置虚拟进程对象用于停止功能
+            class DummyProcess:
+                def __init__(self, thread):
+                    self.thread = thread
+                    self.returncode = None
+                    
+                def poll(self):
+                    if not self.thread.is_alive():
+                        return 0
+                    return None
+                    
+                def terminate(self):
+                    # 无法真正终止，但设置停止标志
+                    self.returncode = -2
+                    
+                def wait(self, timeout=None):
+                    self.thread.join(timeout=timeout)
+                    return self.returncode
+                    
+                def kill(self):
+                    self.returncode = -2
+                
+                # 添加模拟的stdout属性，避免访问错误
+                @property
+                def stdout(self):
+                    """模拟stdout，返回一个类似文件的对象"""
+                    class DummyStdout:
+                        def readline(self):
+                            return ""  # 返回空字符串，表示没有更多输出
+                    return DummyStdout()
+            
+            self.process = DummyProcess(thread)
             
         except Exception as e:
             self._append_output(f"❌ 启动iOS代理失败: {str(e)}\n")
@@ -935,6 +1042,43 @@ class PhoneAgentGUI:
         else:
             self.status_var.set("⚠️ 任务执行结束")
             self._append_output(f"\n⚠️ 任务执行结束，返回码: {return_code}\n")
+
+    def _run_agent_async(self, base_url, model, apikey, task, selected_device):
+        """异步执行代理，避免阻塞界面"""
+        import threading
+        import time
+        
+        # 显示开始信息
+        self._append_output("🚀 正在准备运行环境...\n")
+        self.status_var.set("🔄 准备中...")
+        
+        # 在后台线程中执行所有检查
+        def prepare_and_run():
+            try:
+                # 1. 设备唤醒检测（如果是安卓或鸿蒙）
+                if self.device_type.get() != 'iOS':
+                    import os
+                    tool_name = 'adb' if self.device_type.get() == '安卓' else 'hdc'
+                    self.root.after(0, lambda: self._append_output(f"🔌 检测设备状态（使用: {tool_name}）...\n"))
+                    self.root.after(0, lambda: self.status_var.set("🔌 检测设备..."))
+                    
+                    # 使用默认滑动解锁坐标，可根据设备分辨率调整
+                    pwd = os.getenv('PHONE_AGENT_LOCK_PASSWORD', '')
+                    ok = ensure_awake_and_unlocked(adb=tool_name, swipe=(300, 1000, 300, 300), password=pwd if pwd else None)
+                    
+                    self.root.after(0, lambda: self._append_output(
+                        "✅ 设备已唤醒或已解锁\n" if ok else "⚠️ 无法唤醒设备，继续尝试运行\n"))
+                
+                # 2. 在主线程中调用同步的运行函数
+                self.root.after(0, lambda: self._run_agent_direct(base_url, model, apikey, task, selected_device))
+                
+            except Exception as e:
+                self.root.after(0, lambda: self._append_output(f"❌ 准备失败: {str(e)}\n"))
+                self.root.after(0, lambda: self.status_var.set("❌ 准备失败"))
+        
+        # 启动准备线程
+        thread = threading.Thread(target=prepare_and_run, daemon=True)
+        thread.start()
 
     def _run_agent_direct(self, base_url, model, apikey, task, selected_device):
         """直接运行代理（打包环境）"""
@@ -972,20 +1116,34 @@ class PhoneAgentGUI:
             if selected_device:
                 device_id = selected_device.split(' ')[0]
             
-            # 先进行系统要求检查
-            safe_output("🔍 检查系统要求...\n")
-            if not main.check_system_requirements(device_type, device_id):
-                device_text = "HDC" if device_type_str == "hdc" else "ADB"
-                safe_output(f"❌ 系统要求检查失败，请检查{device_text}和设备连接，以及相关键盘设置\n")
-                self.root.after(0, self._process_finished, -1)
-                return
+            # 并行执行系统检查，提高速度
+            safe_output("🔍 并行检查系统要求和API连通性...\n")
             
-            # 检查模型API连通性
-            safe_output("🔍 检查模型API连通性...\n") 
-            if not main.check_model_api(base_url, model, apikey):
-                safe_output("❌ 模型API检查失败，请检查网络连接和API配置\n")
-                self.root.after(0, self._process_finished, -1)
-                return
+            import concurrent.futures
+            
+            # 创建线程池并行执行检查
+            with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+                # 提交两个检查任务
+                system_check_future = executor.submit(main.check_system_requirements, device_type, device_id)
+                api_check_future = executor.submit(main.check_model_api, base_url, model, apikey)
+                
+                # 等待两个检查完成
+                system_ok = system_check_future.result()
+                api_ok = api_check_future.result()
+                
+                # 检查结果
+                if not system_ok:
+                    device_text = "HDC" if device_type_str == "hdc" else "ADB"
+                    safe_output(f"❌ 系统要求检查失败，请检查{device_text}和设备连接，以及相关键盘设置\n")
+                    self.root.after(0, self._process_finished, -1)
+                    return
+                
+                if not api_ok:
+                    safe_output("❌ 模型API检查失败，请检查网络连接和API配置\n")
+                    self.root.after(0, self._process_finished, -1)
+                    return
+                
+                safe_output("✅ 系统检查和API连通性验证通过\n")
             
 
             
@@ -2043,13 +2201,17 @@ class PhoneAgentGUI:
                 try:
                     if device_type_en == "hdc":
                         self._append_output("🔄 正在重启HDC服务...\n")
-                        subprocess.run(['hdc', 'kill'], capture_output=True, timeout=5)
-                        subprocess.run(['hdc', 'start', '-r'], capture_output=True, timeout=5)
+                        subprocess.run(['hdc', 'kill'], capture_output=True, timeout=5,
+                                     creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
+                        subprocess.run(['hdc', 'start', '-r'], capture_output=True, timeout=5,
+                                     creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
                         self._append_output("✅ HDC服务已重启\n")
                     else:
                         self._append_output("🔄 正在重启ADB服务...\n")
-                        subprocess.run(['adb', 'kill-server'], capture_output=True, timeout=5)
-                        subprocess.run(['adb', 'start-server'], capture_output=True, timeout=5)
+                        subprocess.run(['adb', 'kill-server'], capture_output=True, timeout=5,
+                                     creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
+                        subprocess.run(['adb', 'start-server'], capture_output=True, timeout=5,
+                                     creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
                         self._append_output("✅ ADB服务已重启\n")
                     self.refresh_devices()
                     dialog.after(1000, lambda: self.connect_adb_device())
@@ -2380,7 +2542,8 @@ class PhoneAgentGUI:
                 self._append_output(f"🔗 正在连接到 {ip_address}...\n")
                 try:
                     result = subprocess.run([device_cmd, 'connect', ip_address],
-                                        capture_output=True, text=True, timeout=15)
+                                        capture_output=True, text=True, timeout=15,
+                                        creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
                     if result.returncode == 0:
                         self._append_output(f"✅ 连接成功: {result.stdout.strip() if result.stdout else ''}\n")
                         
@@ -2621,18 +2784,22 @@ class PhoneAgentGUI:
                 if device_type_en == "adb":
                     self._append_output("🔍 检查ADB服务状态...\n")
                     adb_check = subprocess.run(['adb', 'devices'], 
-                                             capture_output=True, text=True, timeout=10)
+                                             capture_output=True, text=True, timeout=10,
+                                             creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
                     
                     if adb_check.returncode != 0:
                         self._append_output("⚠️ ADB服务异常，正在重启...\n")
-                        subprocess.run(['adb', 'kill-server'], capture_output=True, text=True, timeout=10)
-                        subprocess.run(['adb', 'start-server'], capture_output=True, text=True, timeout=10)
+                        subprocess.run(['adb', 'kill-server'], capture_output=True, text=True, timeout=10,
+                                     creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
+                        subprocess.run(['adb', 'start-server'], capture_output=True, text=True, timeout=10,
+                                     creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
                         self._append_output("✅ ADB服务已重启\n")
                 
                 # 第一步：配对
                 pair_result = subprocess.run([device_cmd, 'pair', pair_address],
                                            input=pair_code + '\n',
-                                           capture_output=True, text=True, timeout=30)
+                                           capture_output=True, text=True, timeout=30,
+                                           creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
                 
                 if pair_result.returncode == 0:
                     self._append_output(f"✅ 配对成功: {pair_result.stdout.strip() if pair_result.stdout else ''}\n")
@@ -2640,7 +2807,8 @@ class PhoneAgentGUI:
                     # 第二步：连接
                     self._append_output(f"🌐 连接设备: {connect_address}\n")
                     connect_result = subprocess.run([device_cmd, 'connect', connect_address],
-                                                  capture_output=True, text=True, timeout=15)
+                                                  capture_output=True, text=True, timeout=15,
+                                                  creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
                     
                     if connect_result.returncode == 0:
                         self._append_output(f"✅ 连接成功: {connect_result.stdout.strip() if connect_result.stdout else ''}\n")
@@ -2738,7 +2906,8 @@ class PhoneAgentGUI:
         try:
             # 安装APK
             install_result = subprocess.run(['adb', '-s', device_id, 'install', apk_path],
-                                          capture_output=True, text=True, timeout=60)
+                                          capture_output=True, text=True, timeout=60,
+                                          creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
             
             if install_result.returncode == 0:
                 self._append_output(f"✅ ADB键盘安装成功: {install_result.stdout.strip() if install_result.stdout else ''}\n")
@@ -2747,7 +2916,8 @@ class PhoneAgentGUI:
                 self._append_output("🔧 正在设置ADB键盘为默认输入法...\n")
                 settings_result = subprocess.run(['adb', '-s', device_id, 'shell', 
                                                'ime enable com.android.adbkeyboard/.AdbIME'],
-                                              capture_output=True, text=True, timeout=10)
+                                              capture_output=True, text=True, timeout=10,
+                                              creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
                 
                 if settings_result.returncode == 0:
                     self._append_output("✅ ADB键盘已启用\n")
@@ -2755,7 +2925,8 @@ class PhoneAgentGUI:
                     # 切换到ADB键盘
                     switch_result = subprocess.run(['adb', '-s', device_id, 'shell', 
                                                   'ime set com.android.adbkeyboard/.AdbIME'],
-                                                 capture_output=True, text=True, timeout=10)
+                                                 capture_output=True, text=True, timeout=10,
+                                                 creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
                     
                     if switch_result.returncode == 0:
                         self._append_output("✅ ADB键盘已设置为默认输入法\n")
@@ -3124,18 +3295,22 @@ class PhoneAgentGUI:
                 if device_type_en == "adb":
                     self._append_output("🔍 检查ADB服务状态...\n")
                     adb_check = subprocess.run(['adb', 'devices'], 
-                                             capture_output=True, text=True, timeout=10)
+                                             capture_output=True, text=True, timeout=10,
+                                             creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
                     
                     if adb_check.returncode != 0:
                         self._append_output("⚠️ ADB服务异常，正在重启...\n")
-                        subprocess.run(['adb', 'kill-server'], capture_output=True, text=True, timeout=10)
-                        subprocess.run(['adb', 'start-server'], capture_output=True, text=True, timeout=10)
+                        subprocess.run(['adb', 'kill-server'], capture_output=True, text=True, timeout=10,
+                                     creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
+                        subprocess.run(['adb', 'start-server'], capture_output=True, text=True, timeout=10,
+                                     creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
                         self._append_output("✅ ADB服务已重启\n")
                 
                 # 第一步：配对
                 pair_result = subprocess.run([device_cmd, 'pair', pair_address],
                                            input=pair_code + '\n',
-                                           capture_output=True, text=True, timeout=30)
+                                           capture_output=True, text=True, timeout=30,
+                                           creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
                 
                 if pair_result.returncode == 0:
                     self._append_output(f"✅ 配对成功: {pair_result.stdout.strip() if pair_result.stdout else ''}\n")
@@ -3143,7 +3318,8 @@ class PhoneAgentGUI:
                     # 第二步：连接
                     self._append_output(f"🌐 连接设备: {connect_address}\n")
                     connect_result = subprocess.run([device_cmd, 'connect', connect_address],
-                                                  capture_output=True, text=True, timeout=15)
+                                                  capture_output=True, text=True, timeout=15,
+                                                  creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
                     
                     if connect_result.returncode == 0:
                         self._append_output(f"✅ 连接成功: {connect_result.stdout.strip() if connect_result.stdout else ''}\n")
@@ -3457,14 +3633,16 @@ class PhoneAgentGUI:
                     else:
                         ping_cmd = ['ping', '-c', '1', '-W', '2', ip_address]
                     
-                    ping_result = subprocess.run(ping_cmd, capture_output=True, text=True, timeout=5)
+                    ping_result = subprocess.run(ping_cmd, capture_output=True, text=True, timeout=5,
+                                             creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
                     
                     if ping_result.returncode != 0:
                         self._append_output(f"⚠️ 无法ping通 {ip_address}，但仍尝试连接HDC...\n")
                     
                     # 连接HDC
                     result = subprocess.run(['hdc', 'tconn', remote_address],
-                                        capture_output=True, text=True, timeout=15)
+                                        capture_output=True, text=True, timeout=15,
+                                        creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
                     if result.returncode == 0:
                         self._append_output(f"✅ 远程连接成功: {result.stdout.strip() if result.stdout else ''}\n")
                         
@@ -4095,6 +4273,11 @@ class PhoneAgentGUI:
     
     def set_ios_device_ip(self):
         """设置iOS设备IP地址"""
+        # 防止重复打开窗口的机制
+        if hasattr(self, '_ios_ip_dialog_open') and self._ios_ip_dialog_open:
+            return
+        self._ios_ip_dialog_open = True
+        
         # 使用优化的居中窗口创建方法
         dialog = self.create_centered_toplevel(self.root, "🍎 iOS设备IP设置", 520, 360)
         dialog.transient(self.root)  # 设置为父窗口的子窗口
@@ -4145,6 +4328,8 @@ class PhoneAgentGUI:
                 # 自动保存配置
                 self.on_config_change()
                 
+                # 重置标志并关闭对话框
+                self._ios_ip_dialog_open = False
                 dialog.destroy()
                 messagebox.showinfo("成功", f"✅ iOS设备IP已设置为: {ip_address}")
             else:
@@ -4161,7 +4346,17 @@ class PhoneAgentGUI:
         ip_entry.focus()
         
         # 绑定窗口关闭事件
-        dialog.protocol("WM_DELETE_WINDOW", self._on_legacy_wireless_window_close)
+        def on_dialog_close():
+            self._ios_ip_dialog_open = False
+            dialog.destroy()
+        dialog.protocol("WM_DELETE_WINDOW", on_dialog_close)
+        
+        # 如果是取消按钮，也需要重置标志
+        def on_cancel():
+            self._ios_ip_dialog_open = False
+            dialog.destroy()
+        cancel_button.config(command=on_cancel)
+        
         ip_entry.select_range(0, tk.END)
 
     def on_device_type_change(self):
@@ -4213,7 +4408,16 @@ class PhoneAgentGUI:
                         self.adb_frame.config(text="🍎 iOS设备管理")
                         # iOS模式：修改连接按钮为设置IP，隐藏ADB相关按钮
                         if "连接ADB" in text or "连接HDC" in text:
-                            widget.config(text="🌐 设置设备IP", command=self.set_ios_device_ip)
+                            widget.config(text="🌐 设置设备IP")
+                            # 延迟绑定命令，避免在选择设备类型时自动触发
+                            def safe_bind_command():
+                                try:
+                                    # 确保按钮仍然存在且可见
+                                    if widget.winfo_exists():
+                                        widget.config(command=self.set_ios_device_ip)
+                                except Exception as e:
+                                    print(f"绑定iOS IP设置命令失败: {e}")
+                            self.root.after(100, safe_bind_command)
                         elif ("安装ADB键盘" in text or "远程桌面" in text) and is_visible:
                             widget.pack_forget()
                     else:
