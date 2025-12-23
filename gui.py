@@ -320,7 +320,7 @@ class PhoneAgentGUI:
                     else:
                         device_type_en = "adb"  # 默认
                     
-                    # 只更新标题和按钮文本，不扫描设备
+                    # 更新标题和按钮文本，并更新按钮可见性
                     if device_type_en == "hdc":
                         self.adb_frame.config(text="📱 HDC设备管理")
                     elif device_type_en == "ios":
@@ -338,6 +338,9 @@ class PhoneAgentGUI:
                                 self.device_status_label.config(text=f"已连接: {selected_device}")
                             else:
                                 self.device_status_label.config(text=f"未连接ADB设备")
+                    
+                    # 重要：更新按钮的可见性和连接按钮文本
+                    self.update_device_buttons_visibility()
             
             # 加载远程连接配置
             self.last_remote_connection = config.get('remote_connection', {
@@ -696,13 +699,21 @@ class PhoneAgentGUI:
             self.adb_control_frame = ttk.Frame(self.adb_frame)
             self.adb_control_frame.grid(row=0, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=(0, 10))
             
+            # 通用按钮（所有设备类型都显示）
             ttk.Button(self.adb_control_frame, text="🔄 刷新设备", command=self.refresh_devices).pack(side=tk.LEFT, padx=(0, 8))
-            ttk.Button(self.adb_control_frame, text="🔗 连接ADB", command=self.connect_adb_device).pack(side=tk.LEFT, padx=(0, 8))
+            self.connect_button = ttk.Button(self.adb_control_frame, text="🔗 连接设备", command=self.connect_adb_device)
+            self.connect_button.pack(side=tk.LEFT, padx=(0, 8))
             ttk.Button(self.adb_control_frame, text="📋 设备详情", command=self.show_device_details).pack(side=tk.LEFT, padx=(0, 8))
+            
+            # 仅安卓设备的按钮
             self.remote_desktop_button = ttk.Button(self.adb_control_frame, text="🖥️远程桌面", command=self.open_remote_desktop)
-            self.remote_desktop_button.pack(side=tk.LEFT, padx=(0, 8))
-            ttk.Button(self.adb_control_frame, text="📲 安装ADB键盘", command=self.install_adb_keyboard).pack(side=tk.LEFT, padx=(0, 8))
+            self.adb_keyboard_button = ttk.Button(self.adb_control_frame, text="📲 安装ADB键盘", command=self.install_adb_keyboard)
+            
+            # 通用按钮
             ttk.Button(self.adb_control_frame, text="📱 关注公众号", command=self.open_wechat_qrcode).pack(side=tk.LEFT, padx=(0, 8))
+            
+            # 初始设置按钮显示状态
+            self.update_device_buttons_visibility()
             
             # 设备选择
             ttk.Label(self.adb_frame, text="📱 选择设备:", font=('Microsoft YaHei', 9, 'bold')).grid(row=1, column=0, sticky=tk.W, pady=5)
@@ -2069,7 +2080,7 @@ class PhoneAgentGUI:
 
 
     def connect_adb_device(self):
-        """智能设备连接功能（ADB或HDC）"""
+        """智能设备连接功能（ADB、HDC或iOS）"""
         # 检查是否已经有连接窗口打开
         if self.adb_connection_window is not None and tk.Toplevel.winfo_exists(self.adb_connection_window):
             self._append_output("⚠️ 设备连接窗口已经打开，请先关闭现有窗口\n")
@@ -2081,6 +2092,12 @@ class PhoneAgentGUI:
         
         # 获取当前设备类型
         device_type = self.device_type.get()
+        
+        # 如果是iOS设备，显示iOS IP设置对话框
+        if device_type == "iOS":
+            self.show_ios_ip_dialog()
+            return
+        
         device_type_en = "hdc" if device_type == "鸿蒙" else "adb"
         device_display = "HDC" if device_type_en == "hdc" else "ADB"
         
@@ -2436,6 +2453,119 @@ class PhoneAgentGUI:
             self._append_output(f"❌ 设备检查失败: {str(e)}\n")
             messagebox.showerror("错误", f"设备检查失败: {str(e)}")
             
+    def show_ios_ip_dialog(self):
+        """显示iOS设备IP设置对话框"""
+        # 检查是否已经有iOS IP对话框打开
+        if self._ios_ip_dialog_open:
+            self._append_output("⚠️ iOS IP设置窗口已经打开，请先关闭现有窗口\n")
+            return
+        
+        self._ios_ip_dialog_open = True
+        
+        # 使用优化的居中窗口创建方法，增加高度以确保按钮可见
+        dialog = self.create_centered_toplevel(self.root, "🍎 iOS设备IP设置", 480, 400)
+        self.adb_connection_window = dialog  # 复用同一个变量来管理窗口
+        
+        # 主框架
+        main_frame = ttk.Frame(dialog, padding="20")
+        main_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # 标题
+        title_label = ttk.Label(main_frame, text="🍎 iOS设备连接设置", 
+                               font=('Microsoft YaHei', 12, 'bold'))
+        title_label.pack(pady=(0, 15))
+        
+        # IP设置区域
+        config_frame = ttk.LabelFrame(main_frame, text="🌐 设备网络配置", padding="10")
+        config_frame.pack(fill=tk.X, pady=(0, 15))
+        config_frame.columnconfigure(1, weight=1)
+        
+        # 获取默认IP配置
+        last_ip = getattr(self, 'last_remote_connection', {}).get('ip', '192.168.1.100')
+        
+        ttk.Label(config_frame, text="🌐 设备IP地址:", font=('Microsoft YaHei', 9, 'bold')).grid(row=0, column=0, sticky=tk.W, pady=5)
+        ip_var = tk.StringVar(value=self.ios_device_ip.get() if self.ios_device_ip.get() != "localhost" else last_ip)
+        ip_entry = ttk.Entry(config_frame, textvariable=ip_var, width=25, font=('Microsoft YaHei', 10))
+        ip_entry.grid(row=0, column=1, sticky=(tk.W, tk.E), padx=(10, 0), pady=5)
+        
+        # 说明文字
+        info_frame = ttk.LabelFrame(main_frame, text="📖 使用说明", padding="10")
+        info_frame.pack(fill=tk.X, pady=(0, 15))
+        info_frame.columnconfigure(0, weight=1)
+        
+        info_text = """1. 确保iOS设备已连接到同一WiFi网络
+2. 在iOS设备上安装并启动WebDriverAgent
+3. 确保WebDriverAgent在8100端口运行
+4. 输入iOS设备的IP地址
+5. 点击"测试连接"验证连接状态"""
+        
+        info_label = ttk.Label(info_frame, text=info_text, 
+                              font=('Microsoft YaHei', 9), foreground='#666666', 
+                              justify=tk.LEFT)
+        info_label.grid(row=0, column=0, sticky=tk.W)
+        
+        def test_connection():
+            """测试iOS设备连接"""
+            ip_address = ip_var.get().strip()
+            if not ip_address:
+                messagebox.showwarning("输入错误", "请输入有效的IP地址")
+                return
+            
+            try:
+                import requests
+                wda_url = f"http://{ip_address}:8100/status"
+                response = requests.get(wda_url, timeout=5)
+                if response.status_code == 200:
+                    messagebox.showinfo("连接成功", f"✅ 成功连接到iOS设备\nIP: {ip_address}")
+                    self.ios_device_ip.set(ip_address)
+                    self.on_config_change()  # 保存配置
+                    if hasattr(self, 'device_status_label'):
+                        self.device_status_label.config(text=f"iOS设备IP: {ip_address}")
+                else:
+                    messagebox.showerror("连接失败", f"❌ 无法连接到iOS设备\n请检查:\n1. IP地址是否正确\n2. 设备是否在同一网络\n3. WebDriverAgent是否运行在8100端口")
+            except Exception as e:
+                messagebox.showerror("连接失败", f"❌ 连接测试失败\n错误信息: {str(e)}")
+        
+        def save_ip():
+            """保存IP配置"""
+            ip_address = ip_var.get().strip()
+            if ip_address:
+                self.ios_device_ip.set(ip_address)
+                self.on_config_change()  # 保存配置
+                if hasattr(self, 'device_status_label'):
+                    self.device_status_label.config(text=f"iOS设备IP: {ip_address}")
+                self._append_output(f"✅ iOS设备IP已设置为: {ip_address}\n")
+                messagebox.showinfo("保存成功", f"✅ IP地址已保存\n{ip_address}")
+            else:
+                messagebox.showwarning("输入错误", "请输入有效的IP地址")
+        
+        def save_and_close():
+            """保存IP并关闭对话框"""
+            save_ip()
+            dialog.destroy()
+            self.adb_connection_window = None
+            self._ios_ip_dialog_open = False
+        
+        # 按钮区域 - 使用pack布局确保按钮可见
+        button_frame = ttk.Frame(main_frame)
+        button_frame.pack(pady=(20, 0))
+        
+        # 创建按钮，不使用样式避免样式问题
+        test_btn = ttk.Button(button_frame, text="🔗 测试连接", command=test_connection)
+        test_btn.pack(side=tk.LEFT, padx=5)
+        
+        save_btn = ttk.Button(button_frame, text="💾 保存IP", command=save_ip)
+        save_btn.pack(side=tk.LEFT, padx=5)
+        
+        cancel_btn = ttk.Button(button_frame, text="❌ 关闭", 
+                              command=lambda: (dialog.destroy(), setattr(self, 'adb_connection_window', None), setattr(self, '_ios_ip_dialog_open', False)))
+        cancel_btn.pack(side=tk.LEFT, padx=5)
+        
+        # 绑定窗口关闭事件
+        dialog.protocol("WM_DELETE_WINDOW", lambda: (dialog.destroy(), setattr(self, 'adb_connection_window', None), setattr(self, '_ios_ip_dialog_open', False)))
+        
+        self._append_output("✅ iOS IP设置窗口已打开\n")
+    
     def show_device_details(self):
         """显示设备详细信息对话框"""
         if not self.connected_devices:
@@ -3709,6 +3839,106 @@ class PhoneAgentGUI:
     def on_device_change(self):
         """设备选择变化时自动保存配置"""
         self.on_config_change()
+    
+    def on_device_type_change(self):
+        """设备类型变化时的处理函数"""
+        try:
+            # 获取当前选择的设备类型
+            current_device_type = self.device_type.get()
+            
+            # 如果设备类型没有变化，直接返回
+            if hasattr(self, '_last_device_type') and current_device_type == self._last_device_type:
+                return
+            
+            # 更新设备管理区域的标题
+            if current_device_type == "安卓":
+                device_type_en = "adb"
+                self.adb_frame.config(text="📱 ADB设备管理")
+            elif current_device_type == "鸿蒙":
+                device_type_en = "hdc"
+                self.adb_frame.config(text="📱 HDC设备管理")
+            elif current_device_type == "iOS":
+                device_type_en = "ios"
+                self.adb_frame.config(text="🍎 iOS设备管理")
+                # 对于iOS设备，更新状态显示
+                if hasattr(self, 'device_status_label'):
+                    current_ip = self.ios_device_ip.get()
+                    if current_ip and current_ip != "localhost":
+                        self.device_status_label.config(text=f"iOS设备IP: {current_ip}")
+                    else:
+                        self.device_status_label.config(text="iOS设备未配置IP")
+            else:
+                device_type_en = "adb"  # 默认
+                self.adb_frame.config(text="📱 ADB设备管理")
+            
+            # 更新按钮显示状态
+            self.update_device_buttons_visibility()
+            
+            # 清空设备列表并重新扫描
+            self.connected_devices = []
+            if hasattr(self, 'device_combo'):
+                self.device_combo['values'] = []
+                self.device_combo.set("")
+            
+            # 更新状态标签
+            if hasattr(self, 'device_status_label') and current_device_type != "iOS":
+                device_display = "HDC" if current_device_type == "鸿蒙" else "ADB"
+                self.device_status_label.config(text=f"未连接{device_display}设备", foreground='red')
+            
+            # 自动保存配置
+            self.on_config_change()
+            
+            # 更新防重复标志
+            self._last_device_type = current_device_type
+            
+            # 自动刷新设备列表
+            if current_device_type != "iOS":
+                self.async_refresh_devices()
+            else:
+                self._append_output("🍎 已切换到iOS设备模式\n")
+                
+        except Exception as e:
+            self._append_output(f"❌ 设备类型切换失败: {str(e)}\n")
+    
+    def update_device_buttons_visibility(self):
+        """根据设备类型更新按钮的可见性"""
+        try:
+            current_device_type = self.device_type.get()
+            
+            # 更新连接按钮文本
+            if hasattr(self, 'connect_button'):
+                if current_device_type == "安卓":
+                    self.connect_button.config(text="🔗 连接ADB")
+                elif current_device_type == "鸿蒙":
+                    self.connect_button.config(text="🔗 连接HDC")
+                elif current_device_type == "iOS":
+                    self.connect_button.config(text="🔗 连接iOS")
+            
+            # 对于安卓设备，显示所有按钮
+            if current_device_type == "安卓":
+                if hasattr(self, 'remote_desktop_button'):
+                    self.remote_desktop_button.pack(side=tk.LEFT, padx=(0, 8))
+                if hasattr(self, 'adb_keyboard_button'):
+                    self.adb_keyboard_button.pack(side=tk.LEFT, padx=(0, 8))
+            
+            # 对于鸿蒙设备，隐藏安卓专用按钮
+            elif current_device_type == "鸿蒙":
+                if hasattr(self, 'remote_desktop_button'):
+                    self.remote_desktop_button.pack_forget()
+                if hasattr(self, 'adb_keyboard_button'):
+                    self.adb_keyboard_button.pack_forget()
+            
+            # 对于iOS设备，隐藏安卓专用按钮
+            elif current_device_type == "iOS":
+                if hasattr(self, 'remote_desktop_button'):
+                    self.remote_desktop_button.pack_forget()
+                if hasattr(self, 'adb_keyboard_button'):
+                    self.adb_keyboard_button.pack_forget()
+            
+            self._append_output(f"🔗 已切换到{current_device_type}设备模式，按钮显示已更新\n")
+            
+        except Exception as e:
+            self._append_output(f"❌ 更新按钮显示失败: {str(e)}\n")
     
     def show_task_simplifier(self):
         """显示任务精简器窗口"""
